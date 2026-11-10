@@ -71,7 +71,7 @@ notice and tell the voice thread, which tells you.
 
 1. In **Settings → Voice → Conversation**, choose a **Watchdog thread**. Use a
    separate thread on a cheap model. Choosing it does nothing by itself.
-2. Add a [scheduled task](./scheduled-tasks.md) on that thread that repeats
+2. In **Settings → Scheduled tasks**, add a task on that thread that repeats
    every few minutes with a prompt such as: "Call `voice_health`. If there are
    no findings, stop. Otherwise send the voice thread one line per finding."
 
