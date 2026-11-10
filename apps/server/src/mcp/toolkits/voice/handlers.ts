@@ -1,0 +1,35 @@
+import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+
+import * as VoiceSessionService from "../../../voice/VoiceSessionService.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import { VoiceToolkit } from "./tools.ts";
+
+const refused = (error: VoiceSessionService.VoiceSayRefusedError) =>
+  new OrchestratorMcpFailure({
+    code: error.reason === "not-voice-thread" ? "capability_denied" : "invalid_request",
+    message: error.message,
+  });
+
+const callerThreadId = McpInvocationContext.McpInvocationContext.pipe(
+  Effect.flatMap((scope) => McpInvocationContext.requireThreadScope(scope, "This tool")),
+  Effect.map((scope) => scope.thread.threadId),
+);
+
+const handlers = {
+  voice_say: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const voice = yield* VoiceSessionService.VoiceSessionService;
+      return yield* voice.say(yield* callerThreadId, input).pipe(Effect.mapError(refused));
+    }),
+  ),
+  voice_status: McpToolAccess.readsAsCaller(() =>
+    Effect.gen(function* () {
+      const voice = yield* VoiceSessionService.VoiceSessionService;
+      return yield* voice.status(yield* callerThreadId).pipe(Effect.mapError(refused));
+    }),
+  ),
+} satisfies McpToolAccess.Handlers<typeof VoiceToolkit.tools>;
+
+export const layer = McpToolAccess.toLayer(VoiceToolkit, handlers);
