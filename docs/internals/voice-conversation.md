@@ -2,8 +2,10 @@
 
 A voice conversation is a live, two-way spoken exchange with one thread, the **voice thread**
 (`voiceRouterThreadId` in server settings). It is separate from [voice input](voice-input.md), which
-only edits a composer draft. The server side is in [`apps/server/src/voice`](../../apps/server/src/voice).
-No client starts one yet.
+only edits a composer draft. The server side is in [`apps/server/src/voice`](../../apps/server/src/voice),
+the shared client logic in [`packages/client-runtime/src/voice-conversation`](../../packages/client-runtime/src/voice-conversation),
+and the browser glue in [`apps/web/src/speech/voiceConversation.ts`](../../apps/web/src/speech/voiceConversation.ts).
+Mobile has no client yet.
 
 ## Why the server holds both speech connections
 
@@ -36,3 +38,14 @@ key never reaches a client.
   validated in the contract, because all three are placed in the URL the key is sent to.
 - **Zero retention is a promise.** If the user asked for it and ElevenLabs reports it was not
   applied, the session ends instead of continuing.
+- **The client never buffers microphone audio.** A frame that cannot be sent now is dropped.
+  Late speech would be transcribed after the moment it belonged to and interrupt the wrong thing.
+- **A cleared speech stays cleared.** The playback buffer drops frames for a speech id it has
+  cleared, because audio already on the wire arrives after the `clear`.
+- **Watched threads use the notification channel.** [`VoiceWatch.ts`](../../apps/server/src/voice/VoiceWatch.ts)
+  sends an ordinary server-created queued notification. It uses the `system` source on purpose, so
+  the orchestrator's existing rule decides delivery and nothing here promotes it to a steer.
+  Threads the voice thread delegated are skipped; the delegated-task channel already reports them.
+- **Memory is the voice thread's.** [`MemoryService.ts`](../../apps/server/src/memory/MemoryService.ts)
+  refuses other threads, because anything written there is read back into a later conversation.
+  The secret filter runs on every write and errs toward refusing.
