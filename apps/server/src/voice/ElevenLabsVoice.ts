@@ -77,6 +77,14 @@ function elevenLabsFailureReason(detail: string): VoiceSessionErrorReason {
   return "unavailable";
 }
 
+/**
+ * Records ElevenLabs' own name for a refusal. The user is shown a general message, so without
+ * this a wrong voice, an unavailable model and an outage all look the same afterwards. The name
+ * is an identifier such as `invalid_voice`; it is cut short and never includes the key.
+ */
+const refused = (what: "speech" | "transcription", detail: string) =>
+  Effect.logWarning(`ElevenLabs refused ${what}`, { error: detail.slice(0, 120) });
+
 function float32ToPcm16Base64(pcm: Uint8Array): string {
   const samples = Math.floor(pcm.byteLength / 4);
   const input = new DataView(pcm.buffer, pcm.byteOffset, samples * 4);
@@ -149,6 +157,7 @@ const connectTranscriber = Effect.fn("ElevenLabsVoice.connectTranscriber")(funct
       if (config.zeroRetention) yield* fail("zero-retention-unavailable");
       return;
     }
+    yield* refused("transcription", type);
     yield* fail(elevenLabsFailureReason(type));
   });
   yield* Effect.forever(
@@ -204,8 +213,10 @@ const connectSynthesizer = Effect.fn("ElevenLabsVoice.connectSynthesizer")(funct
     const contextId = message.contextId ?? message.context_id;
     if (contextId === undefined) {
       const detail = message.error ?? message.message;
-      if (detail !== undefined)
+      if (detail !== undefined) {
+        yield* refused("speech", detail);
         yield* emit({ type: "failed", reason: elevenLabsFailureReason(detail) });
+      }
       return;
     }
     if (cancelled.has(contextId)) return;
@@ -307,11 +318,13 @@ const connectDialogueSynthesizer = Effect.fn("ElevenLabsVoice.connectDialogueSyn
           const decoded = decodeDialogueMessage(frame);
           if (decoded._tag === "None") continue;
           const message = decoded.value;
-          if (message.error !== undefined)
+          if (message.error !== undefined) {
+            yield* refused("speech", message.error);
             return yield* report(contextId, {
               type: "failed",
               reason: elevenLabsFailureReason(message.error),
             });
+          }
           if (message.audio) {
             heard = true;
             yield* report(contextId, {
