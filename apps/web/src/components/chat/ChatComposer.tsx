@@ -136,6 +136,7 @@ import { useDictationShortcut } from "../../speech/useDictationShortcut";
 import { useDictationSubmissionShortcut } from "../../speech/useDictationSubmissionShortcut";
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
 import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
+import { ComposerVoiceConversationButton } from "./ComposerVoiceConversationButton";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand } from "../../keybindings";
 import {
@@ -3644,6 +3645,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         />
                       </>
                     ) : null}
+                    {voiceInputActive ? null : (
+                      <ComposerVoiceConversationButton environmentId={environmentId} />
+                    )}
                     <VoiceInputSetup
                       environmentId={speechInput.transcriptionEnvironmentId}
                       open={speechInput.setup.open}

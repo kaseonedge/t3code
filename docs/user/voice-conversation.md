@@ -24,8 +24,14 @@ Open **Settings → Voice → Conversation**.
    speech comes back the same way. This is separate from the dictation setting,
    and turning it off ends a running conversation at once.
 
-Press **Start**. A live conversation shows in the sidebar wherever you are in
-the app, with **End** beside it.
+Press **Start**, or use the voice conversation button beside the dictation
+microphone in any thread's composer on that environment. The button is filled
+while a conversation is on, and pressing it again ends it. Until setup is
+complete it opens these settings instead. A live conversation also shows in the
+sidebar wherever you are in the app, with **End** beside it.
+
+The composer button does not change dictation: the microphone beside it still
+fills in your draft.
 
 Use headphones if you can. Through speakers the bot can hear itself, and your
 browser's echo cancellation does not always catch it.
