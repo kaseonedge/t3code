@@ -528,6 +528,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "voice-conversation",
+    title: "Voice conversation",
+    to: "/settings/voice",
+    searchTerms: ["talk speak elevenlabs voice mode bot conversation hands-free"],
+  },
+  {
     id: "voice-microphone",
     title: "Microphone",
     to: "/settings/voice",
