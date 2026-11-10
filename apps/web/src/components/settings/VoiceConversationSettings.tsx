@@ -39,6 +39,7 @@ import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { MemorySettings } from "./MemorySettings";
 import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -304,6 +305,7 @@ function EnvironmentVoiceConversation({
           </Select>
         }
       />
+      <MemorySettings environmentId={environmentId} environmentLabel={environmentLabel} />
     </>
   );
 }

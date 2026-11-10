@@ -1491,6 +1491,19 @@ export function createServerEnvironmentAtoms<R, E>(
           `${environmentId}:${input.instanceId}:${input.elicitationId}`,
       },
     }),
+    listMemories: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:memory:list",
+      tag: WS_METHODS.serverListMemories,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    forgetMemory: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:memory:forget",
+      tag: WS_METHODS.serverForgetMemory,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.id}`,
+      },
+    }),
     listAcpRegistrySessions: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:acp-registry:list-sessions",
       tag: WS_METHODS.serverListAcpRegistrySessions,

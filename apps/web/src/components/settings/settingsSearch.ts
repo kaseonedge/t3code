@@ -534,6 +534,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["talk speak elevenlabs voice mode bot conversation hands-free"],
   },
   {
+    id: "voice-memory",
+    title: "Memory",
+    to: "/settings/voice",
+    searchTerms: ["remember forget long-term memory facts preferences delete"],
+  },
+  {
     id: "voice-microphone",
     title: "Microphone",
     to: "/settings/voice",

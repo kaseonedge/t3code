@@ -42,6 +42,7 @@ import { SourceControlRepositoryService } from "../sourceControl/SourceControlRe
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import { VoiceSessionService } from "../voice/VoiceSessionService.ts";
+import { MemoryService } from "../memory/MemoryService.ts";
 import { VoiceWatch } from "../voice/VoiceWatch.ts";
 import { buildCodexAdditionalContext } from "./CodexDeveloperInstructions.ts";
 import { DocumentText } from "./DocumentText.ts";
@@ -83,6 +84,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ThreadSearch)({}),
   Layer.mock(VcsStatusBroadcaster)({}),
   Layer.mock(VoiceSessionService)({}),
+  Layer.mock(MemoryService)({}),
   Layer.mock(VoiceWatch)({}),
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 

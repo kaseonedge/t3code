@@ -76,6 +76,13 @@ import {
   AcpRegistrySetProviderInput,
   AcpRegistrySetProviderResult,
 } from "./acpRegistry.ts";
+import {
+  MemoryError,
+  MemoryForgetInput,
+  MemoryForgetResult,
+  MemoryList,
+  MemoryListInput,
+} from "./memory.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
@@ -527,6 +534,8 @@ export const WS_METHODS = {
   serverPrepareAcpRegistryAgent: "server.prepareAcpRegistryAgent",
   serverUninstallAcpRegistryManagedBinary: "server.uninstallAcpRegistryManagedBinary",
   serverAcceptAcpRegistryUrlAuth: "server.acceptAcpRegistryUrlAuth",
+  serverListMemories: "server.listMemories",
+  serverForgetMemory: "server.forgetMemory",
   serverListAcpRegistrySessions: "server.listAcpRegistrySessions",
   serverImportAcpRegistrySession: "server.importAcpRegistrySession",
   serverDeleteAcpRegistrySession: "server.deleteAcpRegistrySession",
@@ -890,6 +899,18 @@ const WsServerAcceptAcpRegistryUrlAuthRpc = Rpc.make(WS_METHODS.serverAcceptAcpR
   payload: AcpRegistryAcceptUrlAuthInput,
   success: AcpRegistryAcceptUrlAuthResult,
   error: EnvironmentAuthorizationError,
+});
+
+const WsServerListMemoriesRpc = Rpc.make(WS_METHODS.serverListMemories, {
+  payload: MemoryListInput,
+  success: MemoryList,
+  error: Schema.Union([MemoryError, EnvironmentAuthorizationError]),
+});
+
+const WsServerForgetMemoryRpc = Rpc.make(WS_METHODS.serverForgetMemory, {
+  payload: MemoryForgetInput,
+  success: MemoryForgetResult,
+  error: Schema.Union([MemoryError, EnvironmentAuthorizationError]),
 });
 
 const WsServerListAcpRegistrySessionsRpc = Rpc.make(WS_METHODS.serverListAcpRegistrySessions, {
@@ -2105,6 +2126,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerPrepareAcpRegistryAgentRpc,
   WsServerUninstallAcpRegistryManagedBinaryRpc,
   WsServerAcceptAcpRegistryUrlAuthRpc,
+  WsServerListMemoriesRpc,
+  WsServerForgetMemoryRpc,
   WsServerListAcpRegistrySessionsRpc,
   WsServerImportAcpRegistrySessionRpc,
   WsServerDeleteAcpRegistrySessionRpc,

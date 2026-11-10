@@ -48,6 +48,7 @@ import { speechHttpApiLayer } from "./speech/http.ts";
 import { speechStreamRouteLayer } from "./speech/stream.ts";
 import * as ElevenLabsVoice from "./voice/ElevenLabsVoice.ts";
 import * as VoiceSessionService from "./voice/VoiceSessionService.ts";
+import * as MemoryService from "./memory/MemoryService.ts";
 import * as VoiceWatch from "./voice/VoiceWatch.ts";
 import { voiceSessionRouteLayer } from "./voice/voiceSessionRoute.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
@@ -854,7 +855,17 @@ const layerMakeRoutes = Layer.mergeAll(
     ),
   ),
   Layer.provide(CloudSpeech.layer.pipe(Layer.provide(SecretResolver.layer))),
-  Layer.provide(layerVoiceWatch),
+  // Agents reach memory over /mcp and people over WebSocket; both see one store.
+  // Merged with the watch list because `pipe` takes a bounded number of steps.
+  Layer.provide(
+    Layer.merge(
+      MemoryService.layer.pipe(
+        Layer.provide(ProjectionStoreV2.layer),
+        Layer.provide(layerServerSettings),
+      ),
+      layerVoiceWatch,
+    ),
+  ),
   // One instance: the socket route starts the conversation and /mcp `voice_say` speaks into it.
   Layer.provide(
     VoiceSessionService.layer.pipe(

@@ -65,6 +65,8 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import * as MemoryHandlers from "./toolkits/memory/handlers.ts";
+import { MemoryToolkit } from "./toolkits/memory/tools.ts";
 import * as VoiceHandlers from "./toolkits/voice/handlers.ts";
 import { VoiceToolkit } from "./toolkits/voice/tools.ts";
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
@@ -1173,6 +1175,7 @@ const layerWorktreeToolkitRegistration = toolkitRegistration(
 ).pipe(Layer.provide(WorktreeMcpService.layer));
 
 const layerVoiceToolkit = toolkitRegistration(VoiceToolkit, VoiceHandlers.layer);
+const layerMemoryToolkit = toolkitRegistration(MemoryToolkit, MemoryHandlers.layer);
 
 const layerPreviewControlsRegistration = toolkitRegistration(
   PreviewControlsToolkit,
@@ -1251,6 +1254,7 @@ export const layerTools = Layer.mergeAll(
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerVoiceToolkit,
+  layerMemoryToolkit,
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
