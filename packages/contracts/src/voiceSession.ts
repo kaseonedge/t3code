@@ -69,6 +69,13 @@ export const VoiceConversationGrant = Schema.Struct({
 export type VoiceConversationGrant = typeof VoiceConversationGrant.Type;
 
 export const VOICE_SESSION_PATH = "/ws/voice-session";
+/**
+ * Starts the text of a turn the user spoke, so the voice thread's agent knows to answer for the
+ * ear. It is for the agent only: clients show the user's words without it.
+ */
+export const VOICE_UTTERANCE_PREFIX = "[voice] ";
+/** Starts the id of a message that came from speech. The id, not the text, marks its source. */
+export const VOICE_MESSAGE_ID_PREFIX = "voice-message:";
 /** Microphone audio: 16 kHz mono Float32 PCM, the same frames `/ws/voice` takes. */
 export const VOICE_SESSION_INPUT_SAMPLE_RATE = 16_000;
 export const VOICE_SESSION_MAX_CHUNK_BYTES = SPEECH_STREAM_MAX_CHUNK_BYTES;

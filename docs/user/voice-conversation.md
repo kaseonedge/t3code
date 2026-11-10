@@ -42,7 +42,7 @@ browser's echo cancellation does not always catch it.
 ## Talk
 
 Your words appear above the composer as you say them, and each finished phrase
-is saved to the voice thread as a message marked `[voice]`. The thread's reply
+is saved to the voice thread as one of your own messages. The thread's reply
 appears there as it is written and is read aloud when it is complete. From
 another thread, the same strip shows what the bot is saying. Long replies are
 read up to about half a minute, then "The rest is in the thread."

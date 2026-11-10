@@ -69,3 +69,7 @@ key never reaches a client.
   and the strip above the composer. The saved record is the `[voice]` user message and the
   thread's own reply, both written by the normal orchestration path, so nothing voice-specific
   can duplicate or lose a message. A reload ends the conversation and loses only captions.
+- **The `[voice]` marker is for the agent, not the reader.** It stays in the stored text so the
+  agent knows a turn was spoken. Clients drop it in `resolveUserMessagePresentation`, keyed on the
+  `voice-message:` id prefix, not on the text, so a typed message that starts the same way is shown
+  as written. Do not strip it at dispatch: the agent would lose the signal.

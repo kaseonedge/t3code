@@ -4,6 +4,8 @@ import {
   isSecretReference,
   MessageId,
   type ThreadId,
+  VOICE_MESSAGE_ID_PREFIX,
+  VOICE_UTTERANCE_PREFIX,
   type VoiceHealthEntry,
   type VoiceSayInput,
   type VoiceSayResult,
@@ -30,9 +32,6 @@ import { spokenForm } from "./spokenForm.ts";
 import { voiceSayLimitViolation } from "./turnFilter.ts";
 import { makeVoiceSession, type VoiceSession } from "./VoiceSession.ts";
 import * as VoiceSpeechProvider from "./VoiceSpeechProvider.ts";
-
-/** Marks a message the user spoke, so the voice thread answers aloud. */
-const VOICE_UTTERANCE_MARKER = "[voice]";
 
 const isApiKey = Schema.is(CloudSpeechApiKey);
 const MAX_HEALTH_ENTRIES = 50;
@@ -131,8 +130,8 @@ const make = Effect.gen(function* () {
           type: "message.dispatch",
           commandId: CommandId.make(`voice:${id}`),
           threadId,
-          messageId: MessageId.make(`voice-message:${id}`),
-          text: `${VOICE_UTTERANCE_MARKER} ${text}`,
+          messageId: MessageId.make(`${VOICE_MESSAGE_ID_PREFIX}${id}`),
+          text: `${VOICE_UTTERANCE_PREFIX}${text}`,
           attachments: [],
           createdBy: "user",
           creationSource: "web",
