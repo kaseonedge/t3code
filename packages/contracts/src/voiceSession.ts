@@ -1,6 +1,12 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { EnvironmentId, NonNegativeInt, PositiveInt, ThreadId } from "./baseSchemas.ts";
+import {
+  EnvironmentId,
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  ThreadId,
+} from "./baseSchemas.ts";
 import { SettingsSecretValue } from "./settingsSecretValue.ts";
 import { SPEECH_STREAM_MAX_CHUNK_BYTES } from "./speech.ts";
 
@@ -221,6 +227,33 @@ export const VoiceWatchResult = Schema.Struct({
   limit: PositiveInt,
 });
 export type VoiceWatchResult = typeof VoiceWatchResult.Type;
+
+/** Something that went wrong with a conversation, kept so a watchdog can report it later. */
+export const VoiceHealthEntry = Schema.Struct({
+  seq: PositiveInt,
+  at: IsoDateTime,
+  kind: Schema.Union([VoiceSessionErrorReason, Schema.Literal("first-audio-timeout")]),
+});
+export type VoiceHealthEntry = typeof VoiceHealthEntry.Type;
+
+export const VoiceHealthFinding = Schema.Struct({
+  /** Stable while the problem lasts, so it is reported once. */
+  key: Schema.String,
+  kind: Schema.Literals(["conversation", "voice-thread-stalled", "worker-stalled"]),
+  threadId: Schema.NullOr(ThreadId),
+  summary: Schema.String,
+  since: IsoDateTime,
+});
+export type VoiceHealthFinding = typeof VoiceHealthFinding.Type;
+
+export const VoiceHealthReport = Schema.Struct({
+  checkedAt: IsoDateTime,
+  /** Problems not reported before. Empty means there is nothing new to tell the user. */
+  findings: Schema.Array(VoiceHealthFinding),
+  /** Problems already reported that are still going on. */
+  ongoing: NonNegativeInt,
+});
+export type VoiceHealthReport = typeof VoiceHealthReport.Type;
 
 export const VoiceSayInput = Schema.Struct({
   text: Schema.String.check(

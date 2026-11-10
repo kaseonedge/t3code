@@ -2,6 +2,7 @@ import {
   encodeVoiceSessionAudioFrame,
   VOICE_SESSION_OUTPUT_SAMPLE_RATE,
   VoiceSessionError,
+  type VoiceHealthEntry,
   type VoiceLocalCommand,
   type VoiceSayPriority,
   type VoiceSayResult,
@@ -39,7 +40,7 @@ export const REPLY_WINDOW = Duration.seconds(8);
 export const CLEAR_ACK_TIMEOUT = Duration.millis(400);
 /** A caller waiting on queued speech is told `held` after this long, and the speech stays queued. */
 export const HELD_REPORT_DELAY = Duration.seconds(4);
-const FIRST_AUDIO_TIMEOUT = Duration.seconds(10);
+export const FIRST_AUDIO_TIMEOUT = Duration.seconds(10);
 /** Audio that stops arriving has ended, whether or not the speech service says so. */
 export const AUDIO_IDLE_TIMEOUT = Duration.seconds(2);
 export const MAX_QUEUED_SPEECH = 8;
@@ -106,6 +107,8 @@ export interface VoiceSessionOptions {
   ) => Effect.Effect<VoiceSpeechConnection, VoiceSessionError, Scope.Scope>;
   readonly send: (event: VoiceSessionEvent) => Effect.Effect<void>;
   readonly sendAudio: (frame: Uint8Array) => Effect.Effect<void>;
+  /** Told of each failure a watchdog should know about. */
+  readonly onHealth?: (kind: VoiceHealthEntry["kind"]) => Effect.Effect<void>;
   /** Hands one finished user turn to the voice thread. */
   readonly dispatchUtterance: (text: string) => Effect.Effect<void, VoiceSessionError>;
 }
@@ -152,6 +155,10 @@ export const makeVoiceSession = Effect.fn("VoiceSession.make")(function* (
   let lastSaid: string | undefined;
   let lastSpoken: SessionStatus["lastSpoken"] = null;
   let reported = { userSpeaking: false, quiet: false, queued: 0 };
+
+  const noteHealth = (kind: VoiceHealthEntry["kind"]) => options.onHealth?.(kind) ?? Effect.void;
+  const failWith = (reason: VoiceSessionErrorReason) =>
+    noteHealth(reason).pipe(Effect.andThen(Deferred.succeed(failure, reason)));
 
   const cancelTimer = (key: string) =>
     Effect.suspend(() => {
@@ -278,7 +285,7 @@ export const makeVoiceSession = Effect.fn("VoiceSession.make")(function* (
   });
 
   const onSynthesizer = Effect.fnUntraced(function* (event: VoiceSynthesizerEvent) {
-    if (event.type === "failed") return yield* Deferred.succeed(failure, event.reason);
+    if (event.type === "failed") return yield* failWith(event.reason);
     const speech = current;
     if (speech === undefined || speech.contextId !== event.contextId || speech.clearing) return;
     const now = yield* Clock.currentTimeMillis;
@@ -317,7 +324,7 @@ export const makeVoiceSession = Effect.fn("VoiceSession.make")(function* (
   });
 
   const onTranscriber = Effect.fnUntraced(function* (event: VoiceTranscriberEvent) {
-    if (event.type === "failed") return yield* Deferred.succeed(failure, event.reason);
+    if (event.type === "failed") return yield* failWith(event.reason);
     if (event.type === "partial") {
       if (event.text.trim().length === 0) return;
       const speaking = current !== undefined && current.clearing === undefined;
@@ -367,6 +374,7 @@ export const makeVoiceSession = Effect.fn("VoiceSession.make")(function* (
         return yield* synthesized(current, yield* Clock.currentTimeMillis);
       case "firstAudio":
         if (current === undefined) return;
+        yield* noteHealth("first-audio-timeout");
         yield* synthesizer.cancel(current.contextId);
         return yield* finish("interrupted", "");
     }
@@ -422,6 +430,7 @@ export const makeVoiceSession = Effect.fn("VoiceSession.make")(function* (
         yield* onTimer(input.key);
         break;
       case "dispatchFailed":
+        yield* noteHealth(input.reason);
         awaitingReply = false;
         yield* cancelTimer("replyWindow");
         yield* options.send({

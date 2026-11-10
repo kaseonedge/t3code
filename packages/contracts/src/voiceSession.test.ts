@@ -9,6 +9,7 @@ import {
   ElevenLabsSettings,
   encodeVoiceSessionAudioFrame,
   VoiceConversationGrant,
+  VoiceHealthReport,
   VoiceSayInput,
   VoiceWatchInput,
   VoiceSessionCommand,
@@ -92,6 +93,17 @@ describe("voice session frames", () => {
     ],
     [ExecutionEnvironmentCapabilities, { voiceConversation: true }, true],
     [VoiceWatchInput, { action: "list" }, true],
+    [ServerSettingsPatch, { voiceWatchdogThreadId: null }, true],
+    [VoiceHealthReport, { checkedAt: "2026-01-01T00:00:00.000Z", findings: [], ongoing: 0 }, true],
+    [
+      VoiceHealthReport,
+      {
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        findings: [{ key: "k", kind: "slow", threadId: null, summary: "s", since: "x" }],
+        ongoing: 0,
+      },
+      false,
+    ],
     [VoiceWatchInput, { action: "follow", threadId: "t1" }, false],
     [
       ServerSettingsPatch,

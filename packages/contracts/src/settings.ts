@@ -1370,6 +1370,10 @@ export const ServerSettings = Schema.Struct({
   voiceRouterThreadId: Schema.NullOr(ThreadId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  // A thread a scheduled task drives to check on the voice thread and its workers.
+  voiceWatchdogThreadId: Schema.NullOr(ThreadId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   // Threads whose finished runs are reported to the voice thread, beyond those it delegated.
   voiceWatchedThreadIds: VoiceWatchedThreadIds.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   speechModelId: Schema.String.pipe(
@@ -1825,6 +1829,7 @@ export const ServerSettingsPatch = Schema.Struct({
   elevenLabs: Schema.optionalKey(ElevenLabsSettingsPatch),
   voiceRouterThreadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
   voiceWatchedThreadIds: Schema.optionalKey(VoiceWatchedThreadIds),
+  voiceWatchdogThreadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
   speechModelId: Schema.optionalKey(Schema.String),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),

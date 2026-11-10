@@ -50,6 +50,7 @@ import * as ElevenLabsVoice from "./voice/ElevenLabsVoice.ts";
 import * as VoiceSessionService from "./voice/VoiceSessionService.ts";
 import * as MemoryService from "./memory/MemoryService.ts";
 import * as VoiceWatch from "./voice/VoiceWatch.ts";
+import * as VoiceWatchdog from "./voice/VoiceWatchdog.ts";
 import { voiceSessionRouteLayer } from "./voice/voiceSessionRoute.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -858,12 +859,17 @@ const layerMakeRoutes = Layer.mergeAll(
   // Agents reach memory over /mcp and people over WebSocket; both see one store.
   // Merged with the watch list because `pipe` takes a bounded number of steps.
   Layer.provide(
-    Layer.merge(
+    Layer.mergeAll(
       MemoryService.layer.pipe(
         Layer.provide(ProjectionStoreV2.layer),
         Layer.provide(layerServerSettings),
       ),
       layerVoiceWatch,
+      // Reads the same conversation service the provide below builds.
+      VoiceWatchdog.layer.pipe(
+        Layer.provide(ProjectionStoreV2.layer),
+        Layer.provide(layerServerSettings),
+      ),
     ),
   ),
   // One instance: the socket route starts the conversation and /mcp `voice_say` speaks into it.

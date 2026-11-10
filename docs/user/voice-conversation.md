@@ -63,6 +63,27 @@ and recall them in later conversations. **Memory** in the same section lists
 everything it has saved, where each entry came from, and lets you delete any of
 them. Passwords, keys, and tokens are refused.
 
+## Watchdog
+
+A long conversation can go wrong quietly: the voice thread hangs, a worker
+stops making progress, or ElevenLabs rejects the key. A watchdog thread can
+notice and tell the voice thread, which tells you.
+
+1. In **Settings → Voice → Conversation**, choose a **Watchdog thread**. Use a
+   separate thread on a cheap model. Choosing it does nothing by itself.
+2. Add a [scheduled task](./scheduled-tasks.md) on that thread that repeats
+   every few minutes with a prompt such as: "Call `voice_health`. If there are
+   no findings, stop. Otherwise send the voice thread one line per finding."
+
+Each scheduled run starts an agent turn, which costs what that provider
+charges, so T3 Code never creates this task for you. The check itself costs
+nothing and reports each problem once, and again only if it clears and comes
+back. To stop, delete the task; set **Watchdog thread** back to None to remove
+its access.
+
+It reports a voice thread with nothing new for 10 minutes, a worker or watched
+thread with nothing new for 20 minutes, and failed conversations.
+
 ## Privacy
 
 **Zero retention** asks ElevenLabs not to keep your audio or text. ElevenLabs

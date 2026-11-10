@@ -28,6 +28,7 @@ import {
 
 const KEY = "xi-fixture-key-not-real";
 const router = ThreadId.make("voice-router");
+const watchdog = ThreadId.make("voice-watchdog");
 const reference = { provider: SecretProviderId.make("work"), reference: "op://Work/Voice/key" };
 type SettingsOverrides = NonNullable<
   Parameters<typeof ServerSettings.ServerSettingsService.layerTest>[0]
@@ -48,6 +49,7 @@ const setup = Effect.fn("test.voiceService.setup")(function* (
           ServerSettings.ServerSettingsService.layerTest({
             elevenLabs: { apiKey: reference, voiceId: "VoiceFixture01" },
             voiceRouterThreadId: router,
+            voiceWatchdogThreadId: watchdog,
             ...settings,
           }),
         ),
@@ -109,6 +111,8 @@ it.effect("no audio leaves this machine until the key is read, and the key is ne
     const locked = yield* Effect.flip(test.open);
     expect(locked).toMatchObject({ _tag: "VoiceSessionError", reason: "unreadable-key" });
     expect(test.connections).toEqual([]);
+    // Kept for the watchdog after the failed start is gone.
+    expect(yield* test.voice.health).toMatchObject([{ seq: 1, kind: "unreadable-key" }]);
 
     test.vault.secret = KEY;
     const session = yield* test.open;
@@ -139,6 +143,8 @@ it.effect.each([
     const test = yield* setup(settings, options);
     expect(yield* Effect.flip(test.open)).toMatchObject({ reason });
     expect(test.connections).toEqual([]);
+    // Unfinished setup is not a fault to report.
+    expect(yield* test.voice.health).toEqual([]);
   }).pipe(Effect.scoped),
 );
 
@@ -190,6 +196,11 @@ it.effect("only the voice thread speaks, within the spoken length limit", () =>
       reason: "not-voice-thread",
     });
     expect(yield* Effect.flip(test.voice.status(ThreadId.make("worker")))).toMatchObject({
+      reason: "not-voice-thread",
+    });
+    // The watchdog thread may look, but not speak.
+    expect(yield* test.voice.status(watchdog)).toMatchObject({ active: true });
+    expect(yield* Effect.flip(say(watchdog, "Hello."))).toMatchObject({
       reason: "not-voice-thread",
     });
     const long = yield* Effect.flip(say(router, "One. Two. Three."));

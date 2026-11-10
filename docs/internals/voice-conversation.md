@@ -49,3 +49,8 @@ key never reaches a client.
 - **Memory is the voice thread's.** [`MemoryService.ts`](../../apps/server/src/memory/MemoryService.ts)
   refuses other threads, because anything written there is read back into a later conversation.
   The secret filter runs on every write and errs toward refusing.
+- **The watchdog's judgement is code.** [`VoiceWatchdog.ts`](../../apps/server/src/voice/VoiceWatchdog.ts)
+  decides what is stalled from recorded timestamps and tells each finding once. The scheduled agent
+  that calls it only relays. The server never creates that task: every run of it spends the user's money.
+  The told-once marks and the conversation failure log live in memory, so a restart repeats a
+  finding that is still true and forgets failures that were never read.

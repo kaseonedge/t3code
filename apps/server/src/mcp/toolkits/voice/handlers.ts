@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 
 import * as VoiceSessionService from "../../../voice/VoiceSessionService.ts";
 import * as VoiceWatch from "../../../voice/VoiceWatch.ts";
+import * as VoiceWatchdog from "../../../voice/VoiceWatchdog.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { VoiceToolkit } from "./tools.ts";
@@ -46,6 +47,24 @@ const handlers = {
                     : error.reason === "unavailable"
                       ? "orchestration_error"
                       : "invalid_request",
+              message: error.message,
+            }),
+        ),
+      );
+    }),
+  ),
+  // Reading marks findings as told, so it is a write: a read-only client must not consume them.
+  voice_health: McpToolAccess.actsAsCaller(() =>
+    Effect.gen(function* () {
+      const watchdog = yield* VoiceWatchdog.VoiceWatchdog;
+      return yield* watchdog.report(yield* callerThreadId).pipe(
+        Effect.mapError(
+          (error) =>
+            new OrchestratorMcpFailure({
+              code:
+                error.reason === "not-watchdog-thread"
+                  ? "capability_denied"
+                  : "orchestration_error",
               message: error.message,
             }),
         ),

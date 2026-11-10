@@ -87,6 +87,10 @@ function EnvironmentVoiceConversation({
     environmentId,
     (settings) => settings.voiceWatchedThreadIds,
   );
+  const watchdogThreadId = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.voiceWatchdogThreadId,
+  );
   const watchable = threads.filter(
     (thread) => thread.id !== voiceThreadId && !watchedIds.includes(thread.id),
   );
@@ -257,6 +261,39 @@ function EnvironmentVoiceConversation({
           </ul>
         ) : null}
       </SettingsRow>
+      <SettingsRow
+        title="Watchdog thread"
+        description="A thread that may check on the voice thread and its workers and report what is stuck. It does nothing by itself: add a scheduled task that asks it to check, as the voice conversation guide describes."
+        control={
+          <Select
+            value={watchdogThreadId ?? NO_THREAD}
+            disabled={!canManage}
+            onValueChange={(value) => {
+              if (value)
+                save({ voiceWatchdogThreadId: value === NO_THREAD ? null : (value as ThreadId) });
+            }}
+          >
+            <SelectTrigger size="sm" aria-label="Watchdog thread" className="max-w-72">
+              <SelectValue>
+                {watchdogThreadId === null
+                  ? "None"
+                  : (threads.find((thread) => thread.id === watchdogThreadId)?.title ??
+                    "Unavailable thread")}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem value={NO_THREAD}>None</SelectItem>
+              {threads
+                .filter((thread) => thread.id !== voiceThreadId)
+                .map((thread) => (
+                  <SelectItem key={thread.id} value={thread.id}>
+                    {thread.title}
+                  </SelectItem>
+                ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
       <SettingsRow
         title="Allow on this device"
         description={`While a conversation is on, this device's microphone is sent through ${environmentLabel} to ElevenLabs, and what the bot says comes back the same way. Turning this off ends a running conversation.`}

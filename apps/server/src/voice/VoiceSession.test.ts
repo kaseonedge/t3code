@@ -13,6 +13,7 @@ import { expect } from "vite-plus/test";
 import {
   AUDIO_IDLE_TIMEOUT,
   CLEAR_ACK_TIMEOUT,
+  FIRST_AUDIO_TIMEOUT,
   HELD_REPORT_DELAY,
   makeVoiceSession,
   MAX_QUEUED_SPEECH,
@@ -42,6 +43,7 @@ const start = Effect.fn("test.voiceSession.start")(function* (
   const frames = yield* Queue.unbounded<Frame>();
   const dispatched = yield* Queue.unbounded<string>();
   const speech: string[] = [];
+  const health: string[] = [];
   let sinks: VoiceSpeechSinks | undefined;
   const session = yield* makeVoiceSession({
     connect: (connected) =>
@@ -56,6 +58,7 @@ const start = Effect.fn("test.voiceSession.start")(function* (
           },
         };
       }),
+    onHealth: (kind) => Effect.sync(() => void health.push(kind)),
     send: (event) => Queue.offer(frames, event),
     sendAudio: (frame) =>
       Queue.offer(frames, {
@@ -78,6 +81,7 @@ const start = Effect.fn("test.voiceSession.start")(function* (
   return {
     session,
     speech,
+    health,
     dispatched,
     next,
     hear,
@@ -295,7 +299,17 @@ it.effect(
       yield* voice.say("The docs build finished.", "announcement");
       expect(yield* voice.next("speech_start")).toMatchObject({ priority: "announcement" });
 
+      // Speech that never produces audio is given up on, and noted like the other failures.
+      yield* voice.finish(1);
+      yield* voice.say("Are you there?");
+      yield* TestClock.adjust(FIRST_AUDIO_TIMEOUT);
+      expect(yield* voice.next("speech_end")).toMatchObject({
+        outcome: "interrupted",
+        spokenText: "",
+      });
+
       yield* voice.hear({ type: "failed", reason: "rate-limit" });
       expect(yield* voice.session.failed).toBe("rate-limit");
+      expect(voice.health).toEqual(["router-unavailable", "first-audio-timeout", "rate-limit"]);
     }).pipe(Effect.scoped),
 );

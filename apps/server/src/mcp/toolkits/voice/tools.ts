@@ -2,6 +2,7 @@ import {
   OrchestratorMcpFailure,
   VoiceSayInput,
   VoiceSayResult,
+  VoiceHealthReport,
   VoiceStatusResult,
   VoiceWatchInput,
   VoiceWatchResult,
@@ -11,6 +12,7 @@ import { Tool, Toolkit } from "effect/ai";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as VoiceSessionService from "../../../voice/VoiceSessionService.ts";
 import * as VoiceWatch from "../../../voice/VoiceWatch.ts";
+import * as VoiceWatchdog from "../../../voice/VoiceWatchdog.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const dependencies = [
@@ -67,4 +69,27 @@ const VoiceWatchTool = Tool.make("voice_watch", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const VoiceToolkit = Toolkit.make(VoiceSayTool, VoiceStatusTool, VoiceWatchTool);
+const VoiceHealthTool = Tool.make("voice_health", {
+  description:
+    "For the watchdog thread: what is wrong with the voice conversation, the voice thread, or its workers that you have not been told before. Each problem is listed once. No findings means there is nothing to do; end your turn.",
+  success: VoiceHealthReport,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    VoiceWatchdog.VoiceWatchdog,
+  ],
+})
+  .annotate(Tool.Title, "Check voice health")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false);
+
+export const VoiceToolkit = Toolkit.make(
+  VoiceSayTool,
+  VoiceStatusTool,
+  VoiceWatchTool,
+  VoiceHealthTool,
+);

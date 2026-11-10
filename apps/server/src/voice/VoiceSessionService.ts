@@ -4,6 +4,7 @@ import {
   isSecretReference,
   MessageId,
   type ThreadId,
+  type VoiceHealthEntry,
   type VoiceSayInput,
   type VoiceSayResult,
   VoiceSessionError,
@@ -13,6 +14,7 @@ import {
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -29,6 +31,12 @@ import * as VoiceSpeechProvider from "./VoiceSpeechProvider.ts";
 const VOICE_UTTERANCE_MARKER = "[voice]";
 
 const isApiKey = Schema.is(CloudSpeechApiKey);
+const MAX_HEALTH_ENTRIES = 50;
+const SETUP_REASONS: ReadonlySet<string> = new Set([
+  "not-configured",
+  "no-router",
+  "already-active",
+]);
 
 export class VoiceSayRefusedError extends Schema.TaggedError<VoiceSayRefusedError>()(
   "VoiceSayRefusedError",
@@ -74,7 +82,10 @@ export class VoiceSessionService extends Context.Service<
       caller: ThreadId,
       input: VoiceSayInput,
     ) => Effect.Effect<VoiceSayResult, VoiceSayRefusedError>;
+    /** For the voice thread, and for the watchdog thread that checks on it. */
     readonly status: (caller: ThreadId) => Effect.Effect<VoiceStatusResult, VoiceSayRefusedError>;
+    /** Recent conversation failures, oldest first. They outlive the conversation they happened in. */
+    readonly health: Effect.Effect<ReadonlyArray<VoiceHealthEntry>>;
   }
 >()("t3/voice/VoiceSessionService") {}
 
@@ -84,6 +95,15 @@ const make = Effect.gen(function* () {
   const speech = yield* VoiceSpeechProvider.VoiceSpeechProvider;
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const random = yield* SecureRandom.SecureRandom;
+  const health: Array<VoiceHealthEntry> = [];
+  let healthSeq = 0;
+  const noteHealth = (kind: VoiceHealthEntry["kind"]) =>
+    DateTime.now.pipe(
+      Effect.map((now) => {
+        health.push({ seq: ++healthSeq, at: DateTime.formatIso(now), kind });
+        if (health.length > MAX_HEALTH_ENTRIES) health.shift();
+      }),
+    );
   let owner: symbol | undefined;
   let active: VoiceSession | undefined;
   const release = (claim: symbol) => {
@@ -137,6 +157,7 @@ const make = Effect.gen(function* () {
     const config = { ...elevenLabs, apiKey: Redacted.make(key), voiceId: elevenLabs.voiceId };
     const session = yield* makeVoiceSession({
       connect: (sinks) => speech.connect(config, sinks),
+      onHealth: noteHealth,
       ...io,
       dispatchUtterance: dispatchUtterance(voiceRouterThreadId),
     });
@@ -151,20 +172,29 @@ const make = Effect.gen(function* () {
       owner = claim;
       yield* Effect.addFinalizer(() => Effect.sync(() => release(claim)));
       // A start that failed holds nothing, so the next one need not wait for this scope to close.
-      return yield* start(io).pipe(Effect.tapError(() => Effect.sync(() => release(claim))));
+      return yield* start(io).pipe(
+        Effect.tapError((error) =>
+          Effect.sync(() => release(claim)).pipe(
+            // Missing setup is the user's to finish, not a fault for a watchdog to report.
+            Effect.andThen(
+              SETUP_REASONS.has(error.reason) ? Effect.void : noteHealth(error.reason),
+            ),
+          ),
+        ),
+      );
     },
   );
 
   const requireVoiceThread = Effect.fn("VoiceSessionService.requireVoiceThread")(function* (
     caller: ThreadId,
+    orWatchdog = false,
   ) {
-    const routerThreadId = yield* settings.getSettings.pipe(
-      Effect.map((current) => current.voiceRouterThreadId),
-      Effect.orElseSucceed(() => null),
+    const { voiceRouterThreadId, voiceWatchdogThreadId } = yield* settings.getSettings.pipe(
+      Effect.orElseSucceed(() => ({ voiceRouterThreadId: null, voiceWatchdogThreadId: null })),
     );
-    if (routerThreadId === null || routerThreadId !== caller)
+    if (caller !== voiceRouterThreadId && !(orWatchdog && caller === voiceWatchdogThreadId))
       return yield* new VoiceSayRefusedError({ reason: "not-voice-thread" });
-    return routerThreadId;
+    return voiceRouterThreadId;
   });
 
   const say: VoiceSessionService["Service"]["say"] = Effect.fn("VoiceSessionService.say")(
@@ -183,7 +213,7 @@ const make = Effect.gen(function* () {
 
   const status: VoiceSessionService["Service"]["status"] = Effect.fn("VoiceSessionService.status")(
     function* (caller) {
-      const routerThreadId = yield* requireVoiceThread(caller);
+      const routerThreadId = yield* requireVoiceThread(caller, true);
       if (active === undefined)
         return {
           active: false,
@@ -199,7 +229,7 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return VoiceSessionService.of({ open, say, status });
+  return VoiceSessionService.of({ open, say, status, health: Effect.sync(() => [...health]) });
 });
 
 export const layer = Layer.effect(VoiceSessionService, make);
