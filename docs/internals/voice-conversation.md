@@ -54,3 +54,9 @@ key never reaches a client.
   that calls it only relays. The server never creates that task: every run of it spends the user's money.
   The told-once marks and the conversation failure log live in memory, so a restart repeats a
   finding that is still true and forgets failures that were never read.
+- **Two speech sockets, chosen by model.** Flash and Multilingual speak through ElevenLabs'
+  multi-context socket, where barge-in closes a context. Eleven v3 and v4 models are refused there
+  and speak only through the single-stream Text to Dialogue socket, which has no contexts, so
+  [`ElevenLabsVoice.ts`](../../apps/server/src/voice/ElevenLabsVoice.ts) opens one connection per
+  speech and closes it to interrupt. That costs a handshake per sentence; do not "fix" it by keeping
+  one dialogue connection open, because then nothing can stop a sentence mid-way.

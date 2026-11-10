@@ -94,6 +94,7 @@ describe("voice session frames", () => {
     [ExecutionEnvironmentCapabilities, { voiceConversation: true }, true],
     [VoiceWatchInput, { action: "list" }, true],
     [ServerSettingsPatch, { voiceWatchdogThreadId: null }, true],
+    [ServerSettingsPatch, { elevenLabs: { textToSpeechModel: "eleven_v4_turbo" } }, true],
     [VoiceHealthReport, { checkedAt: "2026-01-01T00:00:00.000Z", findings: [], ongoing: 0 }, true],
     [
       VoiceHealthReport,

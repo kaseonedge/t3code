@@ -48,6 +48,11 @@ import { VoiceConversationPanel } from "./VoiceConversationPanel";
 
 const NO_THREAD = "none";
 const isVoiceId = Schema.is(ElevenLabsVoiceId);
+// Model ids as ElevenLabs publishes them. Flash stays the default until v4 Turbo has been heard.
+const SPEECH_MODEL_LABELS: Readonly<Record<string, string>> = {
+  eleven_flash_v2_5: "Flash v2.5",
+  eleven_v4_turbo: "v4 Turbo",
+};
 const ACKNOWLEDGEMENT_LABELS: Record<VoiceAcknowledgement, string> = {
   sound: "Short tone",
   visual: "On screen only",
@@ -181,6 +186,32 @@ function EnvironmentVoiceConversation({
               if (voiceId === "" || isVoiceId(voiceId)) save({ elevenLabs: { voiceId } });
             }}
           />
+        }
+      />
+      <SettingsRow
+        title="Speech model"
+        description="The ElevenLabs model the bot speaks with. Flash is the fastest and cheapest. v4 Turbo sounds more natural and costs more per character; your ElevenLabs plan must include it."
+        control={
+          <Select
+            value={elevenLabs.textToSpeechModel}
+            disabled={!canManage}
+            onValueChange={(value) => {
+              if (value) save({ elevenLabs: { textToSpeechModel: value } });
+            }}
+          >
+            <SelectTrigger size="sm" aria-label="Speech model" className="max-w-56">
+              <SelectValue>
+                {SPEECH_MODEL_LABELS[elevenLabs.textToSpeechModel] ?? elevenLabs.textToSpeechModel}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {Object.entries(SPEECH_MODEL_LABELS).map(([model, label]) => (
+                <SelectItem key={model} value={model}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
         }
       />
       <SettingsRow

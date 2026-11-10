@@ -16,6 +16,9 @@ Open **Settings → Voice → Conversation**.
    again. You can point it at a [secret provider](./secrets.md) instead of
    pasting it. Anyone who can talk to that environment can bill the key.
 2. **Voice.** Paste the voice ID from your ElevenLabs voice library.
+   **Speech model** chooses how the bot sounds: Flash v2.5 (the default, fastest
+   and cheapest) or v4 Turbo (more natural, costs more per character, and your
+   ElevenLabs plan must include it).
 3. **Voice thread.** Pick the one thread that hears you and answers. Use a
    thread you keep for this purpose: it does the talking and hands longer work
    to other threads.

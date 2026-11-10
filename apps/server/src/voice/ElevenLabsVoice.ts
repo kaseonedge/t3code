@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -71,7 +72,8 @@ const TRANSCRIPT_MESSAGES = new Set([
 function elevenLabsFailureReason(detail: string): VoiceSessionErrorReason {
   const text = detail.toLowerCase();
   if (/auth|unauthori[sz]ed|invalid_api_key|unaccepted_terms/.test(text)) return "rejected-key";
-  if (/quota|rate_limit|throttl|resource_exhausted|queue_overflow/.test(text)) return "rate-limit";
+  if (/quota|rate_limit|throttl|resource_exhausted|queue_overflow|too_many_concurrent/.test(text))
+    return "rate-limit";
   return "unavailable";
 }
 
@@ -240,6 +242,121 @@ const connectSynthesizer = Effect.fn("ElevenLabsVoice.connectSynthesizer")(funct
   } satisfies VoiceSynthesizer;
 });
 
+/**
+ * Eleven v3 and v4 models are not served by the multi-context socket above. They speak only
+ * through the single-stream "Text to Dialogue" socket, which has no contexts, so nothing but
+ * closing the connection stops a sentence. Each thing the bot says therefore gets its own
+ * connection: barge-in closes it, and its closing flush marks the end of the speech.
+ */
+const usesDialogueSocket = (model: string) => /^eleven_v[34]/.test(model);
+
+const DialogueMessage = Schema.fromJsonString(
+  Schema.Struct({
+    audio: Schema.optional(Schema.NullOr(Schema.String)),
+    alignment: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({
+          chars: Schema.Array(Schema.String),
+          char_start_times_ms: Schema.Array(Schema.Finite),
+        }),
+      ),
+    ),
+    is_final: Schema.optional(Schema.NullOr(Schema.Boolean)),
+    error: Schema.optional(Schema.String),
+  }),
+);
+const decodeDialogueMessage = Schema.decodeUnknownOption(DialogueMessage);
+
+const connectDialogueSynthesizer = Effect.fn("ElevenLabsVoice.connectDialogueSynthesizer")(
+  function* (baseUrl: string, config: VoiceSpeechConfig, emit: VoiceSpeechSinks["onSynthesizer"]) {
+    const scope = yield* Scope.Scope;
+    const constructor = yield* Socket.WebSocketConstructor;
+    const url = new URL("/v1/text-to-dialogue/stream-input", baseUrl);
+    url.searchParams.set("model_id", config.textToSpeechModel);
+    url.searchParams.set("output_format", `pcm_${VOICE_SESSION_OUTPUT_SAMPLE_RATE}`);
+    url.searchParams.set("sync_alignment", "true");
+    if (config.zeroRetention) url.searchParams.set("enable_logging", "false");
+    const speeches = new Map<string, Scope.Closeable>();
+    const cancelled = new Set<string>();
+    // A cancelled speech says nothing more, not even that its socket closed.
+    const report = (contextId: string, event: Parameters<typeof emit>[0]) =>
+      Effect.suspend(() => (cancelled.has(contextId) ? Effect.void : emit(event)));
+
+    const run = Effect.fn("ElevenLabsVoice.speakDialogue")(function* (
+      contextId: string,
+      text: string,
+    ) {
+      const connection = yield* open(url, config.apiKey);
+      yield* connection.write({ voices: [config.voiceId] });
+      yield* connection.write({
+        inputs: [{ text, voice_id: config.voiceId, new_turn: true }],
+      });
+      // Flushes the text however short it is, sends the last audio, then `is_final`.
+      yield* connection.write({ close_socket: true });
+      let heard = false;
+      while (true) {
+        const frames = yield* connection.pull.pipe(Effect.option);
+        // The socket closed. With audio already played that is an ending; without, a failure.
+        if (frames._tag === "None")
+          return yield* report(
+            contextId,
+            heard ? { type: "done", contextId } : { type: "failed", reason: "unavailable" },
+          );
+        for (const frame of frames.value) {
+          if (typeof frame !== "string") continue;
+          const decoded = decodeDialogueMessage(frame);
+          if (decoded._tag === "None") continue;
+          const message = decoded.value;
+          if (message.error !== undefined)
+            return yield* report(contextId, {
+              type: "failed",
+              reason: elevenLabsFailureReason(message.error),
+            });
+          if (message.audio) {
+            heard = true;
+            yield* report(contextId, {
+              type: "audio",
+              contextId,
+              pcm: Buffer.from(message.audio, "base64"),
+              alignment: message.alignment
+                ? {
+                    chars: message.alignment.chars,
+                    startMs: message.alignment.char_start_times_ms,
+                  }
+                : undefined,
+            });
+          }
+          if (message.is_final) return yield* report(contextId, { type: "done", contextId });
+        }
+      }
+    });
+
+    const stop = (contextId: string) =>
+      Effect.suspend(() => {
+        const speech = speeches.get(contextId);
+        speeches.delete(contextId);
+        return speech === undefined ? Effect.void : Scope.close(speech, Exit.void);
+      });
+
+    return {
+      speak: Effect.fn("ElevenLabsVoice.startDialogueSpeech")(function* (contextId, text) {
+        const speech = yield* Scope.fork(scope);
+        speeches.set(contextId, speech);
+        yield* run(contextId, text).pipe(
+          Effect.catch((error) => report(contextId, { type: "failed", reason: error.reason })),
+          Effect.ensuring(stop(contextId)),
+          Scope.provide(speech),
+          Effect.provideService(Socket.WebSocketConstructor, constructor),
+          Effect.forkIn(speech),
+        );
+      }),
+      // Closing the scope closes the socket, so no audio for this speech arrives afterwards.
+      cancel: (contextId) =>
+        Effect.sync(() => cancelled.add(contextId)).pipe(Effect.andThen(stop(contextId))),
+    } satisfies VoiceSynthesizer;
+  },
+);
+
 /** `baseUrl` exists for tests; production always derives the host from the server location. */
 export const makeLayer = (options?: { readonly baseUrl?: string }) =>
   Layer.effect(
@@ -255,7 +372,9 @@ export const makeLayer = (options?: { readonly baseUrl?: string }) =>
           const [transcriber, synthesizer] = yield* Effect.all(
             [
               connectTranscriber(baseUrl, config, sinks.onTranscriber),
-              connectSynthesizer(baseUrl, config, sinks.onSynthesizer),
+              usesDialogueSocket(config.textToSpeechModel)
+                ? connectDialogueSynthesizer(baseUrl, config, sinks.onSynthesizer)
+                : connectSynthesizer(baseUrl, config, sinks.onSynthesizer),
             ],
             { concurrency: 2 },
           ).pipe(Effect.provideService(Socket.WebSocketConstructor, constructor));
