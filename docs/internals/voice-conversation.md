@@ -22,8 +22,13 @@ key never reaches a client.
 ## Constraints
 
 - **The voice thread is the only brain.** A finished user turn is one `message.dispatch` with
-  `deliveryIntent: "auto"`, prefixed `[voice]`. The thread speaks only through the `voice_say` MCP
-  tool. Nothing here calls a model, and no other thread may speak.
+  `deliveryIntent: "auto"`, prefixed `[voice]`. Nothing here calls a model, and no other thread
+  may speak.
+- **Two ways to be heard, never both.** The thread's finished written replies are read aloud by
+  the service (`speakReplies`), so any model works without knowing about voice. A thread that
+  calls `voice_say` instead is not also read aloud for that turn. Reading aloud keys on finished
+  `message.updated` events; streaming updates are ignored, so speech starts when a message
+  completes, not as it is typed.
 - **One fiber owns a session's state.** Speech events, client frames, `voice_say` calls and timers
   all enter one queue ([`VoiceSession.ts`](../../apps/server/src/voice/VoiceSession.ts)). Do not
   read or change session state from another fiber; send an input.
@@ -60,3 +65,7 @@ key never reaches a client.
   [`ElevenLabsVoice.ts`](../../apps/server/src/voice/ElevenLabsVoice.ts) opens one connection per
   speech and closes it to interrupt. That costs a handshake per sentence; do not "fix" it by keeping
   one dialogue connection open, because then nothing can stop a sentence mid-way.
+- **Live captions are not history.** Partial words exist only in the conversation socket's state
+  and the strip above the composer. The saved record is the `[voice]` user message and the
+  thread's own reply, both written by the normal orchestration path, so nothing voice-specific
+  can duplicate or lose a message. A reload ends the conversation and loses only captions.

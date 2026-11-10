@@ -19,10 +19,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import type * as Scope from "effect/Scope";
+import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { spokenForm } from "./spokenForm.ts";
 import { voiceSayLimitViolation } from "./turnFilter.ts";
 import { makeVoiceSession, type VoiceSession } from "./VoiceSession.ts";
 import * as VoiceSpeechProvider from "./VoiceSpeechProvider.ts";
@@ -94,6 +98,7 @@ const make = Effect.gen(function* () {
   const resolver = yield* SecretResolver.SecretResolver;
   const speech = yield* VoiceSpeechProvider.VoiceSpeechProvider;
   const threads = yield* ThreadManagementService.ThreadManagementService;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
   const random = yield* SecureRandom.SecureRandom;
   const health: Array<VoiceHealthEntry> = [];
   let healthSeq = 0;
@@ -104,6 +109,8 @@ const make = Effect.gen(function* () {
         if (health.length > MAX_HEALTH_ENTRIES) health.shift();
       }),
     );
+  // Whether the voice thread has spoken through `voice_say` since the user's last turn.
+  let saidByTool = false;
   let owner: symbol | undefined;
   let active: VoiceSession | undefined;
   const release = (claim: symbol) => {
@@ -117,6 +124,7 @@ const make = Effect.gen(function* () {
 
   const dispatchUtterance = (threadId: ThreadId) =>
     Effect.fn("VoiceSessionService.dispatchUtterance")(function* (text: string) {
+      saidByTool = false;
       const id = yield* random.uuidV4();
       yield* threads
         .dispatch({
@@ -137,6 +145,51 @@ const make = Effect.gen(function* () {
           Effect.mapError(() => fail("router-unavailable")),
         );
     });
+
+  /**
+   * Says the voice thread's written replies aloud, so the conversation works with any model: one
+   * that never calls `voice_say` is still heard. A turn in which the thread did speak through the
+   * tool is left alone, or the user would hear the same answer twice.
+   */
+  const speakReplies = Effect.fn("VoiceSessionService.speakReplies")(function* (
+    session: VoiceSession,
+    routerThreadId: ThreadId,
+  ) {
+    const scope = yield* Scope.Scope;
+    const replies = yield* Queue.unbounded<ReadonlyArray<string>>();
+    const seen = new Set<string>();
+    // One reply at a time, in order. Cutting the bot off drops the rest of what it meant to say.
+    yield* Effect.forever(
+      Effect.gen(function* () {
+        for (const chunk of yield* Queue.take(replies)) {
+          const result = yield* session
+            .say(chunk, "reply")
+            .pipe(Effect.orElseSucceed(() => ({ outcome: "interrupted" as const })));
+          if (result.outcome !== "interrupted") continue;
+          yield* Queue.clear(replies);
+          break;
+        }
+      }),
+    ).pipe(Effect.forkIn(scope));
+    yield* Stream.runForEach(orchestrator.streamDomainEvents, (event) => {
+      if (
+        event.type !== "message.updated" ||
+        event.threadId !== routerThreadId ||
+        event.payload.role !== "assistant" ||
+        event.payload.streaming ||
+        seen.has(event.payload.id)
+      )
+        return Effect.void;
+      seen.add(event.payload.id);
+      const chunks = saidByTool ? [] : spokenForm(event.payload.text);
+      return chunks.length === 0 ? Effect.void : Queue.offer(replies, chunks);
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("voice replies stopped being read aloud", { cause }),
+      ),
+      Effect.forkIn(scope),
+    );
+  });
 
   const start = Effect.fn("VoiceSessionService.start")(function* (io: VoiceSessionIo) {
     const { elevenLabs, voiceRouterThreadId } = yield* readSettings;
@@ -162,6 +215,8 @@ const make = Effect.gen(function* () {
       dispatchUtterance: dispatchUtterance(voiceRouterThreadId),
     });
     active = session;
+    saidByTool = false;
+    yield* speakReplies(session, voiceRouterThreadId);
     return { ...session, routerThreadId: voiceRouterThreadId };
   });
 
@@ -205,6 +260,7 @@ const make = Effect.gen(function* () {
         return yield* new VoiceSayRefusedError({ reason: "too-long", detail: violation });
       if (active === undefined)
         return yield* new VoiceSayRefusedError({ reason: "no-conversation" });
+      saidByTool = true;
       return yield* active
         .say(input.text.trim(), input.priority ?? "reply")
         .pipe(Effect.mapError(() => new VoiceSayRefusedError({ reason: "queue-full" })));

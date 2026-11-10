@@ -101,7 +101,10 @@ it.live("a spoken turn runs the voice thread through the real dispatch path", ()
             sinks = connected;
             return {
               transcriber: { send: () => Effect.void },
-              synthesizer: { speak: () => Effect.void, cancel: () => Effect.void },
+              synthesizer: {
+                speak: (contextId) => connected.onSynthesizer({ type: "done", contextId }),
+                cancel: () => Effect.void,
+              },
             };
           }),
       });
@@ -153,8 +156,15 @@ it.live("a spoken turn runs the voice thread through the real dispatch path", ()
         assert.deepInclude(said, { text: SPOKEN_TURN, createdBy: "user", creationSource: "web" });
         const answer = projection.messages.find((message) => message.role === "assistant");
         assert.include(answer?.text, "fixture simple ok");
+        // The reply the provider wrote is also what the bot says, though it never called a tool.
+        const events: Array<VoiceSessionEvent> = [];
+        yield* Queue.take(frames).pipe(
+          Effect.tap((event) => Effect.sync(() => void events.push(event))),
+          Effect.repeat({ until: (event) => event.type === "speech_start" }),
+        );
+        assert.deepInclude(events.at(-1), { type: "speech_start", priority: "reply" });
+        assert.include(JSON.stringify(events.at(-1)), "fixture simple ok");
         // The user was told the turn was heard before the provider had answered.
-        const events = yield* Queue.takeAll(frames);
         assert.deepInclude(events, { type: "acknowledged", text: SIMPLE_PROMPT });
         assert.isFalse(events.some((event) => event.type === "error"));
       }).pipe(Effect.provide(layerTest));

@@ -97,6 +97,11 @@ it("plays speech frames, and answers a clear with the milliseconds actually play
 it("tracks what the server reports and handles volume and acknowledgement locally", () => {
   const { socket, playback, onAcknowledged, state } = connect();
   socket.receive(ready);
+  socket.receive({ type: "transcript", text: "fix the", final: false });
+  // Words still changing are provisional; only a finished turn is final.
+  expect(state()).toMatchObject({ heard: "fix the", heardFinal: false });
+  socket.receive({ type: "transcript", text: "Fix the login.", final: true });
+  expect(state()).toMatchObject({ heard: "Fix the login.", heardFinal: true });
   socket.receive({ type: "transcript", text: "fix the login", final: false });
   socket.receive({ type: "status", userSpeaking: true, quiet: true, queued: 2 });
   expect(state()).toMatchObject({

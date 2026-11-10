@@ -41,6 +41,12 @@ browser's echo cancellation does not always catch it.
 
 ## Talk
 
+Your words appear above the composer as you say them, and each finished phrase
+is saved to the voice thread as a message marked `[voice]`. The thread's reply
+appears there as it is written and is read aloud when it is complete. From
+another thread, the same strip shows what the bot is saying. Long replies are
+read up to about half a minute, then "The rest is in the thread."
+
 Just speak. The bot is cut off as soon as you say real words; listening sounds
 such as "mm-hm" do not interrupt it. These phrases are handled on the spot,
 without waiting for the thread:

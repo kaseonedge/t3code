@@ -21,6 +21,8 @@ export interface VoiceConversationState {
   readonly queued: number;
   /** What the user is saying, or last said. */
   readonly heard: string;
+  /** False while `heard` is still changing; true once the turn ended and the words are final. */
+  readonly heardFinal: boolean;
   /** What the bot is saying now. */
   readonly speaking: { readonly text: string; readonly priority: VoiceSayPriority } | null;
   readonly error: {
@@ -35,6 +37,7 @@ export const INITIAL_VOICE_CONVERSATION_STATE: VoiceConversationState = {
   quiet: false,
   queued: 0,
   heard: "",
+  heardFinal: true,
   speaking: null,
   error: null,
 };
@@ -82,7 +85,7 @@ export function openVoiceConversation(input: {
       case "ready":
         return update({ phase: "live" });
       case "transcript":
-        return update({ heard: event.text });
+        return update({ heard: event.text, heardFinal: event.final });
       case "acknowledged":
         return input.onAcknowledged();
       case "local_command":

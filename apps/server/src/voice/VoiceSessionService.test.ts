@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { it } from "@effect/vitest";
 import {
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ServerCommand,
   SecretProviderId,
   ThreadId,
@@ -15,8 +16,10 @@ import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VoiceSessionService from "./VoiceSessionService.ts";
@@ -36,8 +39,10 @@ type SettingsOverrides = NonNullable<
 
 const setup = Effect.fn("test.voiceService.setup")(function* (
   settings: SettingsOverrides = {},
-  options: { readonly archived?: boolean } = {},
+  options: { readonly archived?: boolean; readonly holdSpeech?: boolean } = {},
 ) {
+  const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+  const spoken: string[] = [];
   const vault = { secret: KEY as string | undefined, invalidated: 0 };
   const connections: Array<{ config: VoiceSpeechConfig; sinks: VoiceSpeechSinks }> = [];
   const commands: OrchestrationV2ServerCommand[] = [];
@@ -68,7 +73,18 @@ const setup = Effect.fn("test.voiceService.setup")(function* (
                 return {
                   transcriber: { send: () => Effect.void },
                   synthesizer: {
-                    speak: (contextId) => sinks.onSynthesizer({ type: "done", contextId }),
+                    speak: (contextId, text) =>
+                      Effect.sync(() => void spoken.push(text)).pipe(
+                        Effect.andThen(
+                          options.holdSpeech
+                            ? sinks.onSynthesizer({
+                                type: "audio",
+                                contextId,
+                                pcm: new Uint8Array(48_000),
+                              })
+                            : sinks.onSynthesizer({ type: "done", contextId }),
+                        ),
+                      ),
                     cancel: () => Effect.void,
                   },
                 };
@@ -89,15 +105,59 @@ const setup = Effect.fn("test.voiceService.setup")(function* (
               }),
           }),
         ),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            streamDomainEvents: Stream.fromQueue(events),
+          }),
+        ),
         Layer.provide(NodeCrypto.layer),
       ),
     ),
   );
+  let messageCount = 0;
+  /** The voice thread, or another thread, finishes or streams a written reply. */
+  const reply = (
+    text: string,
+    overrides: { threadId?: ThreadId; streaming?: boolean; id?: string } = {},
+  ) =>
+    Queue.offer(events, {
+      type: "message.updated",
+      threadId: overrides.threadId ?? router,
+      payload: {
+        id: overrides.id ?? `message:${++messageCount}`,
+        role: "assistant",
+        streaming: overrides.streaming ?? false,
+        text,
+      },
+    } as never);
+  const next = <T extends VoiceSessionEvent["type"]>(type: T) =>
+    Queue.take(frames).pipe(
+      Effect.repeat({ until: (frame) => frame.type === type }),
+      Effect.map((frame) => frame as Extract<VoiceSessionEvent, { type: T }>),
+    );
+  /** Waits for the bot to start saying something and lets it finish. */
+  const hears = Effect.fn("test.voiceService.hears")(function* () {
+    const started = yield* next("speech_start");
+    yield* TestClock.adjust("1 millis");
+    yield* next("speech_end");
+    return started.text;
+  });
   const io = {
     send: (event: VoiceSessionEvent) => Queue.offer(frames, event),
     sendAudio: () => Effect.void,
   };
-  return { voice, vault, connections, commands, frames, open: voice.open(io) };
+  return {
+    voice,
+    vault,
+    connections,
+    commands,
+    frames,
+    spoken,
+    reply,
+    next,
+    hears,
+    open: voice.open(io),
+  };
 });
 
 it.effect("no audio leaves this machine until the key is read, and the key is never shown", () => {
@@ -219,5 +279,66 @@ it.effect("only the voice thread speaks, within the spoken length limit", () =>
       outcome: "delivered",
       spokenText: "The build passed. I opened a pull request.",
     });
+  }).pipe(Effect.scoped),
+);
+
+it.effect("reads the voice thread's written replies aloud, once each, and nobody else's", () =>
+  Effect.gen(function* () {
+    const test = yield* setup();
+    yield* test.open;
+    // Still being written, and another thread's reply: neither is spoken.
+    yield* test.reply("Hey! Astra", { streaming: true, id: "message:a" });
+    yield* test.reply("Unrelated work finished.", { threadId: ThreadId.make("worker") });
+    yield* test.reply("Hey! **Astra** here. I can hear you.", { id: "message:a" });
+    expect(yield* test.hears()).toBe("Hey! Astra here. I can hear you.");
+    // The same finished message arriving again is not said twice.
+    yield* test.reply("Hey! **Astra** here. I can hear you.", { id: "message:a" });
+    yield* test.reply("Got it.");
+    expect(yield* test.hears()).toBe("Got it.");
+    expect(test.spoken).toEqual(["Hey! Astra here. I can hear you.", "Got it."]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("does not repeat aloud a reply the voice thread already spoke with voice_say", () =>
+  Effect.gen(function* () {
+    const test = yield* setup();
+    yield* test.open;
+    const said = yield* test.voice
+      .say(router, { text: "The build passed." })
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    expect(yield* test.hears()).toBe("The build passed.");
+    yield* Fiber.join(said);
+    yield* test.reply("The build passed. Full log: 412 tests, 0 failures.");
+
+    // The user's next turn starts a fresh reply, which is read aloud again.
+    yield* test.connections[0]!.sinks.onTranscriber({ type: "committed", text: "And the docs?" });
+    yield* test.next("acknowledged");
+    yield* test.reply("Docs are done too.");
+    expect(yield* test.hears()).toBe("Docs are done too.");
+    expect(test.spoken).toEqual(["The build passed.", "Docs are done too."]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("cutting the bot off drops the rest of what it was reading out", () =>
+  Effect.gen(function* () {
+    const test = yield* setup({}, { holdSpeech: true });
+    yield* test.open;
+    const sentence =
+      "This sentence is long enough that only a few of them fit in one breath of speech.";
+    yield* test.reply(Array.from({ length: 6 }, () => sentence).join(" "));
+    yield* test.reply("A second reply that is now stale.");
+    yield* test.next("speech_start");
+    yield* test.connections[0]!.sinks.onTranscriber({ type: "partial", text: "wait, stop there" });
+    yield* test.next("clear");
+    yield* TestClock.adjust("1 second");
+    expect(yield* test.next("speech_end")).toMatchObject({ outcome: "interrupted" });
+    yield* test.connections[0]!.sinks.onTranscriber({
+      type: "committed",
+      text: "Wait, stop there.",
+    });
+    yield* test.next("acknowledged");
+    yield* test.voice.status(router);
+    expect(test.spoken).toHaveLength(1);
+    expect(yield* test.voice.status(router)).toMatchObject({ speaking: null, queued: 0 });
   }).pipe(Effect.scoped),
 );
