@@ -48,6 +48,7 @@ import { speechHttpApiLayer } from "./speech/http.ts";
 import { speechStreamRouteLayer } from "./speech/stream.ts";
 import * as ElevenLabsVoice from "./voice/ElevenLabsVoice.ts";
 import * as VoiceSessionService from "./voice/VoiceSessionService.ts";
+import * as VoiceWatch from "./voice/VoiceWatch.ts";
 import { voiceSessionRouteLayer } from "./voice/voiceSessionRoute.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -644,6 +645,11 @@ const layerServerRestart = Layer.effect(
   }),
 );
 
+const layerVoiceWatch = VoiceWatch.layer.pipe(
+  Layer.provide(ProjectionStoreV2.layer),
+  Layer.provide(layerServerSettings),
+);
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   HeldHooksWaker.layer,
@@ -682,6 +688,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* service.start();
     }),
   ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
+  Layer.effectDiscard(VoiceWatch.VoiceWatch.pipe(Effect.flatMap((watch) => watch.start()))).pipe(
+    Layer.provide(layerVoiceWatch),
+  ),
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ProviderInstallation.layer,
@@ -845,6 +854,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ),
   ),
   Layer.provide(CloudSpeech.layer.pipe(Layer.provide(SecretResolver.layer))),
+  Layer.provide(layerVoiceWatch),
   // One instance: the socket route starts the conversation and /mcp `voice_say` speaks into it.
   Layer.provide(
     VoiceSessionService.layer.pipe(

@@ -10,6 +10,7 @@ import {
   encodeVoiceSessionAudioFrame,
   VoiceConversationGrant,
   VoiceSayInput,
+  VoiceWatchInput,
   VoiceSessionCommand,
   VoiceSessionEvent,
 } from "./voiceSession.ts";
@@ -90,6 +91,18 @@ describe("voice session frames", () => {
       false,
     ],
     [ExecutionEnvironmentCapabilities, { voiceConversation: true }, true],
+    [VoiceWatchInput, { action: "list" }, true],
+    [VoiceWatchInput, { action: "follow", threadId: "t1" }, false],
+    [
+      ServerSettingsPatch,
+      { voiceWatchedThreadIds: Array.from({ length: 20 }, (_, i) => `t${i}`) },
+      true,
+    ],
+    [
+      ServerSettingsPatch,
+      { voiceWatchedThreadIds: Array.from({ length: 21 }, (_, i) => `t${i}`) },
+      false,
+    ],
   ] as const)("%# decodes as expected", (schema, value, accepted) => {
     expect(ok(schema, value)).toBe(accepted);
   });

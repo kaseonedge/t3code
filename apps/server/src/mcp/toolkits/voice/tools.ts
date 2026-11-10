@@ -3,11 +3,14 @@ import {
   VoiceSayInput,
   VoiceSayResult,
   VoiceStatusResult,
+  VoiceWatchInput,
+  VoiceWatchResult,
 } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as VoiceSessionService from "../../../voice/VoiceSessionService.ts";
+import * as VoiceWatch from "../../../voice/VoiceWatch.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const dependencies = [
@@ -45,4 +48,23 @@ const VoiceStatusTool = Tool.make("voice_status", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const VoiceToolkit = Toolkit.make(VoiceSayTool, VoiceStatusTool);
+const VoiceWatchTool = Tool.make("voice_watch", {
+  description:
+    "Choose threads you did not delegate whose finished runs are reported to you, so you can tell the user. watch, unwatch, or list. Tasks from `delegate_task` report on their own; do not watch them.",
+  parameters: VoiceWatchInput,
+  success: VoiceWatchResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    VoiceWatch.VoiceWatch,
+  ],
+})
+  .annotate(Tool.Title, "Watch threads for the voice conversation")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+export const VoiceToolkit = Toolkit.make(VoiceSayTool, VoiceStatusTool, VoiceWatchTool);

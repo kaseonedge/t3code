@@ -61,7 +61,11 @@ import {
   SpeechModelUnloadTimeout,
   SpeechPostProcessingPromptSettings,
 } from "./speech.ts";
-import { ElevenLabsSettings, ElevenLabsSettingsPatch } from "./voiceSession.ts";
+import {
+  ElevenLabsSettings,
+  ElevenLabsSettingsPatch,
+  VoiceWatchedThreadIds,
+} from "./voiceSession.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
@@ -1366,6 +1370,8 @@ export const ServerSettings = Schema.Struct({
   voiceRouterThreadId: Schema.NullOr(ThreadId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  // Threads whose finished runs are reported to the voice thread, beyond those it delegated.
+  voiceWatchedThreadIds: VoiceWatchedThreadIds.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
   ),
@@ -1818,6 +1824,7 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   elevenLabs: Schema.optionalKey(ElevenLabsSettingsPatch),
   voiceRouterThreadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
+  voiceWatchedThreadIds: Schema.optionalKey(VoiceWatchedThreadIds),
   speechModelId: Schema.optionalKey(Schema.String),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),

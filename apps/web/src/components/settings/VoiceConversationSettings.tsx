@@ -7,7 +7,9 @@ import {
   type SecretReference,
   type ServerSettingsPatch,
   type ThreadId,
+  VOICE_WATCH_LIMIT,
 } from "@t3tools/contracts";
+import { XIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { useState } from "react";
@@ -80,6 +82,13 @@ function EnvironmentVoiceConversation({
   );
   const keySaved = isSecretReference(elevenLabs.apiKey) || elevenLabs.apiKey !== "";
   const voiceThread = threads.find((thread) => thread.id === voiceThreadId);
+  const watchedIds = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.voiceWatchedThreadIds,
+  );
+  const watchable = threads.filter(
+    (thread) => thread.id !== voiceThreadId && !watchedIds.includes(thread.id),
+  );
   const blocker = voiceConversationBlocker({
     connected: prepared !== null && canTalk,
     keySaved,
@@ -197,6 +206,56 @@ function EnvironmentVoiceConversation({
           </Select>
         }
       />
+      <SettingsRow
+        title="Watched threads"
+        description={`When one of these finishes a run, the voice thread is told and can tell you. Threads it delegated report on their own. Up to ${VOICE_WATCH_LIMIT}.`}
+        control={
+          <Select
+            value={null}
+            disabled={
+              !canManage || watchedIds.length >= VOICE_WATCH_LIMIT || watchable.length === 0
+            }
+            onValueChange={(value) => {
+              if (value) save({ voiceWatchedThreadIds: [...watchedIds, value as ThreadId] });
+            }}
+          >
+            <SelectTrigger size="sm" aria-label="Watch a thread" className="max-w-48">
+              <SelectValue>Watch a thread</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {watchable.map((thread) => (
+                <SelectItem key={thread.id} value={thread.id}>
+                  {thread.title}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        }
+      >
+        {watchedIds.length > 0 ? (
+          <ul className="flex flex-col gap-1 px-4 pb-3">
+            {watchedIds.map((id) => (
+              <li key={id} className="flex min-w-0 items-center gap-2 text-sm">
+                <span className="min-w-0 flex-1 truncate">
+                  {threads.find((thread) => thread.id === id)?.title ?? "Unavailable thread"}
+                </span>
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label="Stop watching this thread"
+                  disabled={!canManage}
+                  onClick={() =>
+                    save({ voiceWatchedThreadIds: watchedIds.filter((watched) => watched !== id) })
+                  }
+                >
+                  <XIcon />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </SettingsRow>
       <SettingsRow
         title="Allow on this device"
         description={`While a conversation is on, this device's microphone is sent through ${environmentLabel} to ElevenLabs, and what the bot says comes back the same way. Turning this off ends a running conversation.`}

@@ -2,6 +2,7 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import * as VoiceSessionService from "../../../voice/VoiceSessionService.ts";
+import * as VoiceWatch from "../../../voice/VoiceWatch.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { VoiceToolkit } from "./tools.ts";
@@ -28,6 +29,27 @@ const handlers = {
     Effect.gen(function* () {
       const voice = yield* VoiceSessionService.VoiceSessionService;
       return yield* voice.status(yield* callerThreadId).pipe(Effect.mapError(refused));
+    }),
+  ),
+  voice_watch: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const watch = yield* VoiceWatch.VoiceWatch;
+      return yield* watch.change(yield* callerThreadId, input.action, input.threadId).pipe(
+        Effect.mapError(
+          (error) =>
+            new OrchestratorMcpFailure({
+              code:
+                error.reason === "not-voice-thread"
+                  ? "capability_denied"
+                  : error.reason === "thread-not-found"
+                    ? "thread_not_found"
+                    : error.reason === "unavailable"
+                      ? "orchestration_error"
+                      : "invalid_request",
+              message: error.message,
+            }),
+        ),
+      );
     }),
   ),
 } satisfies McpToolAccess.Handlers<typeof VoiceToolkit.tools>;

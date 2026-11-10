@@ -202,6 +202,26 @@ export function decodeVoiceSessionAudioFrame(
   };
 }
 
+/** Enough to follow a day's work; more would bury the user in announcements. */
+export const VOICE_WATCH_LIMIT = 20;
+export const VoiceWatchedThreadIds = Schema.Array(ThreadId).check(
+  Schema.isMaxLength(VOICE_WATCH_LIMIT),
+);
+
+export const VoiceWatchInput = Schema.Struct({
+  action: Schema.Literals(["watch", "unwatch", "list"]),
+  threadId: Schema.optional(ThreadId).annotate({
+    description: "The thread to start or stop watching. Not needed for list.",
+  }),
+});
+export type VoiceWatchInput = typeof VoiceWatchInput.Type;
+
+export const VoiceWatchResult = Schema.Struct({
+  watched: Schema.Array(ThreadId),
+  limit: PositiveInt,
+});
+export type VoiceWatchResult = typeof VoiceWatchResult.Type;
+
 export const VoiceSayInput = Schema.Struct({
   text: Schema.String.check(
     Schema.isMinLength(1),
