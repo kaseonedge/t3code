@@ -2,7 +2,7 @@ import * as NodeURL from "node:url";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { type VoiceSessionEvent } from "@t3tools/contracts";
+import { MessageId, type VoiceSessionEvent } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
@@ -32,16 +32,25 @@ import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderRepl
 import { materializeReplayTranscriptRuntimeInstructions } from "../orchestration-v2/testkit/ReplayRuntimeInstructions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { withVoiceRouterBrief } from "./routerBrief.ts";
 import * as VoiceSessionService from "./VoiceSessionService.ts";
 import { VoiceSpeechProvider, type VoiceSpeechSinks } from "./VoiceSpeechProvider.ts";
 
 const SPOKEN_TURN = `[voice] ${SIMPLE_PROMPT}`;
+/** What the provider is sent for it: the router brief, then the user's words. */
+const PROVIDER_TURN = withVoiceRouterBrief({
+  messageId: MessageId.make("voice-message:fixture"),
+  text: SPOKEN_TURN,
+  attachments: [],
+  createdBy: "user",
+  creationSource: "web",
+}).text;
 
 /**
  * A spoken turn, end to end, with no paid model and no ElevenLabs: the real voice service, the
  * real thread service and orchestrator, the real effect worker and Codex adapter, answered by a
  * recorded Codex session. The recording is strict: it fails unless the prompt the provider is
- * sent is exactly the `[voice]` message.
+ * sent is exactly the router brief followed by the `[voice]` message.
  */
 it.live("a spoken turn runs the voice thread through the real dispatch path", () =>
   Effect.scoped(
@@ -53,7 +62,7 @@ it.live("a spoken turn runs the voice thread through the real dispatch path", ()
       const recorded = yield* fs.readFileString(NodeURL.fileURLToPath(variant.transcriptFile));
       // The recording was made with the bare prompt; the voice thread is sent it marked as spoken.
       const rewritten = yield* decodeProviderReplayNdjson(
-        recorded.replaceAll(SIMPLE_PROMPT, SPOKEN_TURN),
+        recorded.replaceAll(SIMPLE_PROMPT, JSON.stringify(PROVIDER_TURN).slice(1, -1)),
       );
       const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
         materializeReplayTranscriptWorkspace(

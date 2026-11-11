@@ -24,6 +24,12 @@ key never reaches a client.
 - **The voice thread is the only brain.** A finished user turn is one `message.dispatch` with
   `deliveryIntent: "auto"`, prefixed `[voice]`. Nothing here calls a model, and no other thread
   may speak.
+- **The router brief travels with the spoken turn.** A spoken message that starts a run is sent to
+  the provider with the router instructions in front of it
+  ([`routerBrief.ts`](../../apps/server/src/voice/routerBrief.ts)); the stored message is
+  unchanged. No provider has a per-thread instruction slot, so this is the one place that reaches
+  all of them, and repeating it per run survives compaction. Typed messages are left alone so
+  `/compact` and worker reports keep their exact text.
 - **Two ways to be heard, never both.** The thread's finished written replies are read aloud by
   the service (`speakReplies`), so any model works without knowing about voice. A thread that
   calls `voice_say` instead is not also read aloud for that turn. Reading aloud keys on finished
