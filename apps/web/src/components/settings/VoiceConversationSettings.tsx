@@ -96,6 +96,10 @@ function EnvironmentVoiceConversation({
     environmentId,
     (settings) => settings.voiceWatchdogThreadId,
   );
+  const announceAll = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.voiceAnnounceAllThreads,
+  );
   const watchable = threads.filter(
     (thread) => thread.id !== voiceThreadId && !watchedIds.includes(thread.id),
   );
@@ -243,8 +247,20 @@ function EnvironmentVoiceConversation({
         }
       />
       <SettingsRow
+        title="Report every thread"
+        description="When any thread finishes or stops to wait for your approval or answer, the voice thread tells you, with a link. Each report uses a turn of its model. Off, only watched threads report."
+        control={
+          <Switch
+            aria-label="Report every thread"
+            checked={announceAll}
+            disabled={!canManage}
+            onCheckedChange={(voiceAnnounceAllThreads) => save({ voiceAnnounceAllThreads })}
+          />
+        }
+      />
+      <SettingsRow
         title="Watched threads"
-        description={`When one of these finishes a run, the voice thread is told and can tell you. Threads it delegated report on their own. Up to ${VOICE_WATCH_LIMIT}.`}
+        description={`These report to the voice thread even when every-thread reports are off. Threads it delegated report on their own. Up to ${VOICE_WATCH_LIMIT}.`}
         control={
           <Select
             value={null}

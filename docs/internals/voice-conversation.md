@@ -53,10 +53,15 @@ key never reaches a client.
   Late speech would be transcribed after the moment it belonged to and interrupt the wrong thing.
 - **A cleared speech stays cleared.** The playback buffer drops frames for a speech id it has
   cleared, because audio already on the wire arrives after the `clear`.
-- **Watched threads use the notification channel.** [`VoiceWatch.ts`](../../apps/server/src/voice/VoiceWatch.ts)
-  sends an ordinary server-created queued notification. It uses the `system` source on purpose, so
-  the orchestrator's existing rule decides delivery and nothing here promotes it to a steer.
-  Threads the voice thread delegated are skipped; the delegated-task channel already reports them.
+- **Other threads report through the notification channel.** [`VoiceWatch.ts`](../../apps/server/src/voice/VoiceWatch.ts)
+  tells the voice thread when a listed thread's run ends or it opens a request only the user can
+  settle, as an ordinary server-created queued notification. It uses the `system` source on
+  purpose, so the orchestrator's existing rule decides delivery and nothing here promotes it to a
+  steer. The command id is derived from the run or request, so a repeated event is one notice.
+  Subagents, side chats and remote tasks are skipped because their parent already hears; the voice
+  thread and the watchdog thread are skipped so a report cannot cause another report. A request
+  notice carries no request contents, only where to read them, and both notices say they are not
+  leave to act. Events are not replayed: one that arrives while the server is down is not reported.
 - **Memory is the voice thread's.** [`MemoryService.ts`](../../apps/server/src/memory/MemoryService.ts)
   refuses other threads, because anything written there is read back into a later conversation.
   The secret filter runs on every write and errs toward refusing.

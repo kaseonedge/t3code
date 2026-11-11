@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EnvironmentId,
   EventId,
   MessageId,
   type OrchestrationV2DomainEvent,
@@ -8,6 +9,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RuntimeRequestId,
   ThreadId,
   VOICE_WATCH_LIMIT,
 } from "@t3tools/contracts";
@@ -15,6 +17,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -38,13 +41,21 @@ const layerDatabase = SqlitePersistence.layerMemory;
 const router = ThreadId.make("thread:voice-router");
 const watched = ThreadId.make("thread:watched");
 const other = ThreadId.make("thread:other");
+const watchdog = ThreadId.make("thread:watchdog");
+const environmentId = EnvironmentId.make("environment-voice");
 
 // The real orchestrator, so these prove it accepts the notification the reactor sends.
 const layerTest = VoiceWatch.layer.pipe(
   Layer.provideMerge(
     ServerSettings.ServerSettingsService.layerTest({
       voiceRouterThreadId: router,
+      voiceWatchdogThreadId: watchdog,
       voiceWatchedThreadIds: [watched],
+    }),
+  ),
+  Layer.provide(
+    Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({
+      getEnvironmentId: Effect.succeed(environmentId),
     }),
   ),
   Layer.provideMerge(
@@ -117,33 +128,116 @@ const routerNotices = Effect.gen(function* () {
   return projection.messages.filter((message) => message.notification !== undefined);
 });
 
-it.effect("tells the voice thread once when a watched thread's run ends, and only then", () =>
+/** `threadId` stops to ask the user something, or the request is settled. */
+const request = (
+  threadId: ThreadId,
+  status: "pending" | "resolved",
+  kind: "command" | "user_input" | "dynamic_tool_call" = "command",
+) =>
+  Effect.map(
+    DateTime.now,
+    (occurredAt) =>
+      ({
+        id: EventId.make(`event:${threadId}:request:${kind}:${status}`),
+        type: "runtime-request.updated",
+        threadId,
+        occurredAt,
+        payload: { id: RuntimeRequestId.make(`request:${threadId}:${kind}`), kind, status },
+      }) as unknown as OrchestrationV2DomainEvent,
+  );
+
+it.effect("tells the voice thread once when any thread's run ends, with a link to it", () =>
   Effect.gen(function* () {
     const watch = yield* VoiceWatch.VoiceWatch;
     yield* createThread(router, "Voice");
-    yield* createThread(watched, "Auth fix");
-    yield* createThread(other, "Unwatched");
+    yield* createThread(other, "Auth fix");
+    yield* createThread(watchdog, "Watchdog");
 
-    yield* watch.handle(yield* finishedRun(other, "completed"));
-    const running = yield* finishedRun(watched, "running");
+    // Its own run, the watchdog's routine checks and a run still going are not news.
+    yield* watch.handle(yield* finishedRun(router, "completed"));
+    yield* watch.handle(yield* finishedRun(watchdog, "completed"));
+    const running = yield* finishedRun(other, "running");
     yield* watch.handle(running);
     assert.deepEqual(yield* routerNotices, []);
 
-    const done = { ...running, payload: { ...running.payload, status: "completed" as const } };
+    const done = { ...running, payload: { ...running.payload, status: "failed" as const } };
     yield* watch.handle(done);
     // The same run can report its end more than once; the voice thread hears it once.
     yield* watch.handle(done);
     const notices = yield* routerNotices;
     assert.lengthOf(notices, 1);
     const [notice] = notices;
-    assert.include(notice!.text, `Watched thread ${watched} (Auth fix) [completed]`);
+    assert.include(
+      notice!.text,
+      `Thread ${other} (Auth fix) [failed]: [Auth fix](t3-thread://v2/${environmentId}/`,
+    );
+    assert.include(notice!.text, "not a request to you");
     assert.deepEqual(notice!.notification, {
       source: { kind: "system" },
-      outcome: "completed",
-      summary: 'Watched thread "Auth fix" completed',
+      outcome: "failed",
+      summary: 'Thread "Auth fix" failed',
     });
     assert.equal(notice!.createdBy, "agent");
     assert.equal(notice!.creationSource, "server");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("with every-thread reports off, only watched threads are reported", () =>
+  Effect.gen(function* () {
+    const watch = yield* VoiceWatch.VoiceWatch;
+    yield* (yield* ServerSettings.ServerSettingsService).updateSettings({
+      voiceAnnounceAllThreads: false,
+    });
+    yield* createThread(router, "Voice");
+    yield* createThread(watched, "Auth fix");
+    yield* createThread(other, "Unwatched");
+    yield* watch.handle(yield* finishedRun(other, "completed"));
+    yield* watch.handle(yield* request(other, "pending"));
+    assert.deepEqual(yield* routerNotices, []);
+    yield* watch.handle(yield* finishedRun(watched, "completed"));
+    assert.lengthOf(yield* routerNotices, 1);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a thread waiting on the user is reported as that, apart from a finished one", () =>
+  Effect.gen(function* () {
+    const watch = yield* VoiceWatch.VoiceWatch;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    yield* createThread(router, "Voice");
+    yield* createThread(other, "Deploy");
+
+    // A tool call the app answers itself is not the user's to settle.
+    yield* watch.handle(yield* request(other, "pending", "dynamic_tool_call"));
+    assert.deepEqual(yield* routerNotices, []);
+
+    const asked = yield* request(other, "pending");
+    yield* watch.handle(asked);
+    yield* watch.handle(asked);
+    const [notice, ...rest] = yield* routerNotices;
+    assert.deepEqual(rest, []);
+    assert.include(
+      notice!.text,
+      `Thread ${other} (Deploy) is waiting for an approval from the user`,
+    );
+    assert.include(notice!.text, `requestId request:${other}:command`);
+    // Hearing about it is not leave to settle it.
+    assert.include(notice!.text, "Do not reply to that thread, approve, deny, answer or act on it");
+    assert.deepEqual(notice!.notification, {
+      source: { kind: "system" },
+      outcome: "updated",
+      summary: 'Thread "Deploy" needs an approval',
+    });
+
+    // The voice thread is busy with that notice, so a second thread's question waits its turn.
+    yield* watch.handle(yield* request(other, "pending", "user_input"));
+    const queued = () =>
+      Effect.map(projections.getThreadProjection(router), (projection) =>
+        projection.runs.filter((run) => run.status === "queued"),
+      );
+    assert.lengthOf(yield* queued(), 1);
+    // Answered before the voice thread reached it: the stale notice is withdrawn, not delivered.
+    yield* watch.handle(yield* request(other, "resolved", "user_input"));
+    assert.deepEqual(yield* queued(), []);
   }).pipe(Effect.provide(layerTest)),
 );
 

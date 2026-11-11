@@ -1383,6 +1383,8 @@ export const ServerSettings = Schema.Struct({
   ),
   // Threads whose finished runs are reported to the voice thread, beyond those it delegated.
   voiceWatchedThreadIds: VoiceWatchedThreadIds.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  // Whether every thread reports to the voice thread, or only the watched ones.
+  voiceAnnounceAllThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
   ),
@@ -1836,6 +1838,7 @@ export const ServerSettingsPatch = Schema.Struct({
   elevenLabs: Schema.optionalKey(ElevenLabsSettingsPatch),
   voiceRouterThreadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
   voiceWatchedThreadIds: Schema.optionalKey(VoiceWatchedThreadIds),
+  voiceAnnounceAllThreads: Schema.optionalKey(Schema.Boolean),
   voiceWatchdogThreadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
   speechModelId: Schema.optionalKey(Schema.String),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
