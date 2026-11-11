@@ -73,6 +73,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverPrepareAcpRegistryAgent]: "server",
   [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: "server",
   [WS_METHODS.serverAcceptAcpRegistryUrlAuth]: "server",
+  [WS_METHODS.serverListMemories]: "server",
+  [WS_METHODS.serverForgetMemory]: "server",
   [WS_METHODS.serverListAcpRegistrySessions]: "server",
   [WS_METHODS.serverImportAcpRegistrySession]: "server",
   [WS_METHODS.serverDeleteAcpRegistrySession]: "server",

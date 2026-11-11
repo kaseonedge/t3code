@@ -8,6 +8,8 @@ import {
   type OrchestrationV2IdleCompaction,
   type OrchestrationV2UserMessageInputIntent,
   ScheduledTaskId,
+  VOICE_MESSAGE_ID_PREFIX,
+  VOICE_UTTERANCE_PREFIX,
 } from "@t3tools/contracts";
 import {
   isAttachmentOnlyBootstrapPrompt,
@@ -91,6 +93,19 @@ export function resolveUserMessagePresentation(message: {
       text: message.text,
       attribution: "automation",
       scheduledTaskId: message.scheduledTaskId,
+    };
+  }
+  // A spoken turn carries a marker for the agent; people see only what they said. The message id
+  // says it was spoken, so a typed message that happens to start the same way is left alone.
+  if (
+    message.id?.startsWith(VOICE_MESSAGE_ID_PREFIX) === true &&
+    message.createdBy !== "agent" &&
+    message.text.startsWith(VOICE_UTTERANCE_PREFIX)
+  ) {
+    return {
+      text: message.text.slice(VOICE_UTTERANCE_PREFIX.length),
+      attribution: null,
+      scheduledTaskId: undefined,
     };
   }
   const legacyPrefix = LEGACY_AUTOMATION_PREFIX.exec(message.text);

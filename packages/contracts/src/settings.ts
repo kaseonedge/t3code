@@ -61,6 +61,11 @@ import {
   SpeechModelUnloadTimeout,
   SpeechPostProcessingPromptSettings,
 } from "./speech.ts";
+import {
+  ElevenLabsSettings,
+  ElevenLabsSettingsPatch,
+  VoiceWatchedThreadIds,
+} from "./voiceSession.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
@@ -1367,6 +1372,17 @@ export const ServerSettings = Schema.Struct({
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
     Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
   ),
+  elevenLabs: ElevenLabsSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // The one long-lived thread that hears and answers voice conversations on this environment.
+  voiceRouterThreadId: Schema.NullOr(ThreadId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  // A thread a scheduled task drives to check on the voice thread and its workers.
+  voiceWatchdogThreadId: Schema.NullOr(ThreadId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  // Threads whose finished runs are reported to the voice thread, beyond those it delegated.
+  voiceWatchedThreadIds: VoiceWatchedThreadIds.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
   ),
@@ -1817,6 +1833,10 @@ export const ServerSettingsPatch = Schema.Struct({
       openrouter: Schema.optionalKey(SettingsSecretValue),
     }),
   ),
+  elevenLabs: Schema.optionalKey(ElevenLabsSettingsPatch),
+  voiceRouterThreadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
+  voiceWatchedThreadIds: Schema.optionalKey(VoiceWatchedThreadIds),
+  voiceWatchdogThreadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
   speechModelId: Schema.optionalKey(Schema.String),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),

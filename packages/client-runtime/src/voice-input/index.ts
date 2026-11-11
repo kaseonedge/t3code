@@ -20,6 +20,7 @@ export {
   setCloudSpeechKey,
   transcribeCloudPcm,
   getEnvironmentSpeechStatus,
+  getEnvironmentMediaSocketUrl,
   getEnvironmentSpeechStreamUrl,
   linkEnvironmentSpeechModels,
   postProcessEnvironmentTranscript,

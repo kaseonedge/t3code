@@ -170,6 +170,35 @@ describe("resolveUserMessagePresentation", () => {
     }
   });
 
+  it("shows a spoken turn as the user's own words, without the marker the agent reads", () => {
+    const spoken = {
+      id: "voice-message:6f1c",
+      role: "user",
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      text: "[voice] Check one, two.",
+    };
+    // Still the user's own message: no new speaker is invented for it.
+    expect(resolveUserMessagePresentation(spoken)).toEqual({
+      text: "Check one, two.",
+      attribution: null,
+      scheduledTaskId: undefined,
+    });
+    // The id marks the source. The same words typed, quoted by an agent, or in a reply stay as written.
+    for (const other of [
+      { ...spoken, id: "message:typed" },
+      { role: spoken.role, createdBy: spoken.createdBy, text: spoken.text },
+      { ...spoken, createdBy: "agent" as const },
+      { ...spoken, role: "assistant" },
+    ]) {
+      expect(resolveUserMessagePresentation(other).text).toBe("[voice] Check one, two.");
+    }
+    // Only a leading marker is removed.
+    expect(
+      resolveUserMessagePresentation({ ...spoken, text: "[voice] I said [voice] aloud." }).text,
+    ).toBe("I said [voice] aloud.");
+  });
+
   it("hides the prompt that stands in for an attachment-only message", () => {
     for (const text of [
       ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,

@@ -177,6 +177,14 @@ it.effect("reads a collected reference again once it is invalidated", () =>
       Effect.succeed({
         sourceControlHosts: hosts,
         cloudSpeechCredentials: { openai: source("voice#key"), xai: "", openrouter: "" },
+        elevenLabs: {
+          apiKey: source("elevenlabs#key"),
+          voiceId: "",
+          speechToTextModel: "scribe_v2_realtime",
+          textToSpeechModel: "eleven_flash_v2_5",
+          serverLocation: "global",
+          zeroRetention: false,
+        },
         usageLimitSources,
         textGenerators: {},
         easDeviceHosts,

@@ -19,7 +19,9 @@ it("meters microphone-only capture like transcription without emitting PCM", asy
       return true;
     }
   }
-  let Processor!: new (options?: { processorOptions: { meterOnly: boolean } }) => Worklet;
+  let Processor!: new (options?: {
+    processorOptions: { meterOnly?: boolean; live?: boolean };
+  }) => Worklet;
   setGlobal("sampleRate", 48_000);
   setGlobal("AudioWorkletProcessor", Worklet);
   setGlobal("registerProcessor", (_name: string, processor: typeof Processor) => {
@@ -61,4 +63,15 @@ it("meters microphone-only capture like transcription without emitting PCM", asy
   );
   microphone.port.onmessage?.({ data: "stop" });
   expect(microphone.port.postMessage).toHaveBeenLastCalledWith("stopped");
+
+  // A live conversation sends a tenth of a second at a time and has no five-minute limit.
+  const live = new Processor({ processorOptions: { live: true } });
+  live.port.onmessage?.({ data: "start" });
+  const second = new Float32Array(48_000).fill(0.1);
+  for (let elapsed = 0; elapsed < 301; elapsed++) live.process([[second]]);
+  const posted = live.port.postMessage.mock.calls.map(([data]) => data);
+  const chunks = posted.filter((data) => data instanceof Float32Array);
+  expect(new Set(chunks.map((chunk) => chunk.length))).toEqual(new Set([1_600]));
+  expect(chunks.length).toBeGreaterThan(3_000);
+  expect(posted).not.toContain("limit");
 });

@@ -1754,6 +1754,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const router = ProviderInstanceId.make("openrouter");
         const withUsage = yield* serverSettings.updateSettings({
           cloudSpeechCredentials: { openai: usageReference, xai: "literal-fixture" },
+          elevenLabs: { apiKey: usageReference, voiceId: "VoiceFixture01" },
           textGenerators: {
             [router]: {
               kind: "openaiCompatible",
@@ -1807,6 +1808,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           secretReferences: false,
         });
         assert.notInclude(JSON.stringify(legacy), "op://");
+        assert.deepInclude(legacy.elevenLabs, {
+          apiKey: SECRET_REDACTED,
+          voiceId: "VoiceFixture01",
+        });
         assert.deepEqual(legacy.cloudSpeechCredentials, {
           openai: SECRET_REDACTED,
           xai: SECRET_REDACTED,
@@ -1823,6 +1828,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.equal(configOf(legacy, openCode)?.serverPassword, SECRET_REDACTED);
         const echoed = yield* serverSettings.updateSettings({
           cloudSpeechCredentials: legacy.cloudSpeechCredentials,
+          elevenLabs: legacy.elevenLabs,
           sourceControlHosts: legacy.sourceControlHosts,
           usageLimitSources: legacy.usageLimitSources,
           textGenerators: legacy.textGenerators,
@@ -1842,6 +1848,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           xai: "literal-fixture",
           openrouter: "",
         });
+        assert.deepEqual(echoed.elevenLabs.apiKey, usageReference);
+        const literal = yield* serverSettings.updateSettings({
+          elevenLabs: { apiKey: "eleven-literal-fixture" },
+        });
+        for (const secretReferences of [true, false]) {
+          const shown = ServerSettingsModule.redactServerSettingsForClient(literal, {
+            secretReferences,
+          });
+          assert.notInclude(JSON.stringify(shown), "eleven-literal-fixture");
+          assert.equal(shown.elevenLabs.voiceId, "VoiceFixture01");
+        }
         assert.deepEqual(echoed.easDeviceHosts[0]?.accessToken, easReference);
         assert.deepEqual(echoed.simlockDeviceHosts[0]?.agentToken, simlockReference);
         assert.deepEqual(configOf(echoed, antigravity)?.apiKey, antigravityReference);
@@ -1939,6 +1956,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         "cloudSpeechCredentials.openai",
         "cloudSpeechCredentials.xai",
         "cloudSpeechCredentials.openrouter",
+        "elevenLabs.apiKey",
         "easDeviceHosts.[].accessToken",
         "simlockDeviceHosts.[].agentToken",
         "usageLimitSources.*.managementKey",

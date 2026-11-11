@@ -96,6 +96,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverPrepareAcpRegistryAgent]: AuthProvidersManageScope,
   [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: AuthProvidersManageScope,
   [WS_METHODS.serverAcceptAcpRegistryUrlAuth]: AuthProvidersManageScope,
+  [WS_METHODS.serverListMemories]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverForgetMemory]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverListAcpRegistrySessions]: AuthOrchestrationReadScope,
   [WS_METHODS.serverImportAcpRegistrySession]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverDeleteAcpRegistrySession]: AuthOrchestrationOperateScope,
