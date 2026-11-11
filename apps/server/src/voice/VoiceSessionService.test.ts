@@ -371,7 +371,7 @@ it.effect("a voice_say refused for a full queue does not silence the written rep
     // More than the queue holds, none of it from the voice thread's tool.
     for (let index = 0; index <= MAX_QUEUED_SPEECH; index++)
       yield* session
-        .say(`Note ${index}.`, "news")
+        .say(`Note ${index}.`, "announcement")
         .pipe(Effect.forkChild({ startImmediately: true }));
     yield* test.voice.status(router);
     expect(yield* Effect.flip(test.voice.say(router, { text: "All green." }))).toMatchObject({
