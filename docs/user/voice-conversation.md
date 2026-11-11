@@ -68,9 +68,16 @@ an answer is ready: a short tone, an on-screen "Heard you", or nothing.
 
 ## Hear about other work
 
-Work the voice thread starts itself is reported to you when it finishes. To
-hear about threads it did not start, add them under **Watched threads**, or ask
-the bot to watch one. Remove a thread from the list to stop.
+You do not have to check each thread. When any thread finishes a run, or stops
+to wait for your approval or answer, the voice thread is told and tells you:
+what happened or what is blocking, the decision it needs from you, and a link
+to the thread. It is said aloud while a conversation is on and is always
+written in the voice thread. The bot does not approve or answer for you.
+
+Each report is a turn on the voice thread's model. To hear about fewer threads,
+turn off **Report every thread** in **Settings → Voice → Conversation** and add
+the ones you care about under **Watched threads**, or ask the bot to watch one.
+Subagents and side chats report to the thread that started them, not to you.
 
 ## Memory
 
