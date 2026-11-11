@@ -212,6 +212,7 @@ import * as IdleCompactionService from "./orchestration-v2/IdleCompactionService
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
 import * as RunFinalizationService from "./orchestration-v2/RunFinalizationService.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
+import * as CommandReceiptStoreV2 from "./orchestration-v2/CommandReceiptStore.ts";
 import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
 import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
 import { acceptsPrivateNetworkConnection, loopbackUrlHostForAddress } from "./startupAccess.ts";
@@ -648,7 +649,13 @@ const layerServerRestart = Layer.effect(
 );
 
 const layerVoiceWatch = VoiceWatch.layer.pipe(
-  Layer.provide(ProjectionStoreV2.layer),
+  Layer.provide(
+    Layer.mergeAll(
+      ProjectionStoreV2.layer,
+      RuntimeLayer.layerEventSink,
+      CommandReceiptStoreV2.layerFromApplicationReceipts,
+    ),
+  ),
   Layer.provide(layerServerSettings),
 );
 

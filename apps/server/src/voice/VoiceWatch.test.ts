@@ -5,7 +5,9 @@ import {
   EventId,
   MessageId,
   NodeId,
+  type OrchestrationV2AppThreadLineage,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Subagent,
   type OrchestrationV2Run,
   OrchestrationV2RuntimeRequest,
   ProjectId,
@@ -20,10 +22,13 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
+import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -65,6 +70,7 @@ const layerTest = VoiceWatch.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       layerDatabase,
+      CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase)),
       ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
       EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
       ProviderReplayHarness.layerWithRegistry(
@@ -79,6 +85,7 @@ const layerTest = VoiceWatch.layer.pipe(
 const createThread = Effect.fn("test.voiceWatch.createThread")(function* (
   threadId: ThreadId,
   title: string,
+  lineage?: OrchestrationV2AppThreadLineage,
 ) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   yield* orchestrator.dispatch({
@@ -95,6 +102,22 @@ const createThread = Effect.fn("test.voiceWatch.createThread")(function* (
     createdBy: "user",
     creationSource: "web",
   });
+  if (lineage !== undefined) {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const events = yield* EventSink.EventSinkV2;
+    const thread = yield* projections.getThread(threadId);
+    yield* events.write({
+      events: [
+        {
+          id: EventId.make(`event:lineage:${threadId}`),
+          type: "thread.metadata-updated",
+          threadId,
+          occurredAt: yield* DateTime.now,
+          payload: { ...thread, lineage },
+        },
+      ],
+    });
+  }
 });
 
 /** Starts a run in `threadId` and returns the event for it ending with `status`. */
@@ -211,6 +234,101 @@ it.effect("tells the voice thread once when any thread's run ends, with a link t
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("reports side chats, nested blockers and settled remote tasks with source links", () =>
+  Effect.gen(function* () {
+    const watch = yield* VoiceWatch.VoiceWatch;
+    const side = ThreadId.make("thread:side");
+    const nested = ThreadId.make("thread:nested");
+    const remote = ThreadId.make("thread:remote");
+    const remoteEnvironment = EnvironmentId.make("environment-remote");
+    yield* createThread(router, "Voice");
+    yield* createThread(other, "Parent");
+    yield* createThread(side, "Side chat", {
+      parentThreadId: other,
+      rootThreadId: other,
+      relationshipToParent: "fork",
+      sideChat: true,
+    });
+    yield* createThread(nested, "Nested worker", {
+      parentThreadId: side,
+      rootThreadId: other,
+      relationshipToParent: "subagent",
+    });
+
+    yield* watch.handle(yield* finishedRun(side, "completed"));
+    yield* watch.handle(yield* request(nested, "pending"));
+    const runEnded = yield* finishedRun(nested, "completed");
+    yield* watch.handle(runEnded);
+    const now = yield* DateTime.now;
+    const task: OrchestrationV2Subagent = {
+      id: NodeId.make("node:remote"),
+      threadId: nested,
+      runId: runEnded.runId,
+      parentNodeId: NodeId.make("node:nested"),
+      origin: "app_owned",
+      createdBy: "agent",
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: instanceId,
+      providerThreadId: null,
+      childThreadId: null,
+      remoteChild: { environmentId: remoteEnvironment, threadId: remote, label: "Remote" },
+      nativeTaskRef: null,
+      prompt: "Fix the build",
+      title: "Remote build",
+      model: null,
+      status: "completed",
+      result: "Fixed the build",
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    };
+    const completed = {
+      id: EventId.make("event:remote:completed"),
+      type: "subagent.updated",
+      threadId: nested,
+      occurredAt: now,
+      payload: task,
+    } satisfies OrchestrationV2DomainEvent;
+    yield* watch.handle({ ...completed, payload: { ...task, result: null } });
+    yield* watch.handle(completed);
+    yield* watch.handle(completed);
+    const { remoteChild: _remoteChild, ...localTask } = task;
+    yield* watch.handle({
+      ...completed,
+      threadId: side,
+      payload: {
+        ...localTask,
+        id: NodeId.make("node:local"),
+        threadId: side,
+        childThreadId: nested,
+        result: "Finished the local work",
+      },
+    });
+    yield* watch.handle({
+      ...completed,
+      threadId: router,
+      payload: { ...task, threadId: router },
+    });
+
+    const notices = yield* routerNotices;
+    assert.lengthOf(notices, 4);
+    assert.isTrue(notices.some((notice) => notice.text.includes("Finished the local work")));
+    assert.isTrue(
+      notices.some((notice) => notice.text.includes(`t3-thread://v2/${environmentId}/${side}`)),
+    );
+    assert.isTrue(
+      notices.some((notice) => notice.text.includes(`t3-thread://v2/${environmentId}/${nested}`)),
+    );
+    assert.isTrue(
+      notices.some(
+        (notice) =>
+          notice.text.includes(`t3-thread://v2/${remoteEnvironment}/${remote}`) &&
+          notice.text.includes("Fixed the build"),
+      ),
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("with every-thread reports off, only watched threads are reported", () =>
   Effect.gen(function* () {
     const watch = yield* VoiceWatch.VoiceWatch;
@@ -250,7 +368,7 @@ it.effect("a thread waiting on the user is reported as that, apart from a finish
       notice!.text,
       `Thread ${other} (Deploy) is waiting for an approval from the user`,
     );
-    assert.include(notice!.text, `requestId request:${other}:command`);
+    assert.notInclude(notice!.text, "t3_pending_request");
     // Hearing about it is not leave to settle it.
     assert.include(notice!.text, "Do not reply to that thread, approve, deny, answer or act on it");
     assert.deepEqual(notice!.notification, {
@@ -266,14 +384,68 @@ it.effect("a thread waiting on the user is reported as that, apart from a finish
         projection.runs.filter((run) => run.status === "queued"),
       );
     assert.lengthOf(yield* queued(), 1);
-    // Answered before the voice thread reached it: the stale notice is withdrawn, not delivered,
-    // even though the user has since turned reports off.
+    const replacement = ThreadId.make("thread:voice-replacement");
+    yield* createThread(replacement, "Replacement voice");
+    // Withdraw from the original destination even after the setting changed.
     yield* (yield* ServerSettings.ServerSettingsService).updateSettings({
       voiceAnnounceAllThreads: false,
+      voiceRouterThreadId: replacement,
     });
     yield* watch.handle(yield* request(other, "resolved", "user_input"));
     assert.deepEqual(yield* queued(), []);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("replays stored events and withdraws a queued request from the old voice thread", () =>
+  Effect.gen(function* () {
+    const watch = yield* VoiceWatch.VoiceWatch;
+    const events = yield* EventSink.EventSinkV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const sql = yield* SqlClient.SqlClient;
+    const replacement = ThreadId.make("thread:voice-after-restart");
+    yield* createThread(router, "Voice");
+    yield* createThread(replacement, "New voice");
+    yield* createThread(other, "Deploy");
+
+    yield* finishedRun(router, "running");
+    const pending = yield* request(other, "pending");
+    const [stored] = yield* events.write({ events: [pending] });
+    yield* watch.handle(pending);
+    const queued = (yield* projections.getThreadProjection(router)).runs.find(
+      (run) => run.status === "queued",
+    );
+    assert.isDefined(queued);
+
+    // Leave the cursor before a notice whose dispatch committed, as a crash can.
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_metadata
+        (projection_name, schema_version, last_sequence, updated_at)
+      VALUES ('voice-watch', 1, ${stored!.sequence - 1}, ${DateTime.formatIso(pending.occurredAt)})
+    `;
+    yield* settings.updateSettings({ voiceRouterThreadId: replacement });
+    yield* events.write({ events: [yield* request(other, "resolved")] });
+    yield* events.write({ events: [yield* finishedRun(other, "completed")] });
+
+    const highWater = yield* events.latestSequence();
+    yield* watch.start();
+    yield* events.stream({ afterSequence: highWater, threadId: replacement }).pipe(
+      Stream.filter(({ event }) => event.type === "message.updated"),
+      Stream.runHead,
+    );
+    const old = yield* projections.getThreadProjection(router);
+    const next = yield* projections.getThreadProjection(replacement);
+    assert.equal(old.runs.find((run) => run.id === queued?.id)?.status, "cancelled");
+    assert.lengthOf(
+      old.messages.filter((message) => message.notification !== undefined),
+      1,
+    );
+    const [notice, ...extra] = next.messages.filter(
+      (message) => message.notification !== undefined,
+    );
+    assert.deepEqual(extra, []);
+    assert.equal(notice?.notification?.outcome, "completed");
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 
 it.effect("the voice thread manages a capped watch list, and nobody else does", () =>

@@ -68,16 +68,19 @@ an answer is ready: a short tone, an on-screen "Heard you", or nothing.
 
 ## Hear about other work
 
-You do not have to check each thread. When any thread finishes a run, or stops
-to wait for your approval or answer, the voice thread is told and tells you:
-what happened or what is blocking, the decision it needs from you, and a link
-to the thread. It is said aloud while a conversation is on and is always
-written in the voice thread. The bot does not approve or answer for you.
+The voice thread reports finished runs and requests for your approval or answer
+in this environment. Reports include a link to the source, including side chats
+and delegated work. Open the link to review and act on an approval. Reports
+appear in the voice thread and can be read aloud during a conversation.
 
-Each report is a turn on the voice thread's model. To hear about fewer threads,
-turn off **Report every thread** in **Settings → Voice → Conversation** and add
-the ones you care about under **Watched threads**, or ask the bot to watch one.
-Subagents and side chats report to the thread that started them, not to you.
+For work delegated to a linked environment, the originating environment reports
+the result when it receives it. Live approvals and questions surface in the
+environment where they are requested. The voice thread receives results from
+its own delegated work through the usual task channel.
+
+Each report uses a model turn. To hear about fewer threads, turn off **Report
+thread activity** in **Settings → Voice → Conversation** and add threads under
+**Watched threads**, or ask the bot to watch one.
 
 ## Memory
 

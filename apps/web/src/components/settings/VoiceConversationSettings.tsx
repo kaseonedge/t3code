@@ -247,11 +247,11 @@ function EnvironmentVoiceConversation({
         }
       />
       <SettingsRow
-        title="Report every thread"
-        description="When any thread finishes or stops to wait for your approval or answer, the voice thread tells you, with a link. Each report uses a turn of its model. Off, only watched threads report."
+        title="Report thread activity"
+        description="Reports finished work and requests for your input in this environment, including side chats and linked task results. Each report uses a model turn. Turn off to report only watched work."
         control={
           <Switch
-            aria-label="Report every thread"
+            aria-label="Report thread activity"
             checked={announceAll}
             disabled={!canManage}
             onCheckedChange={(voiceAnnounceAllThreads) => save({ voiceAnnounceAllThreads })}
@@ -260,7 +260,7 @@ function EnvironmentVoiceConversation({
       />
       <SettingsRow
         title="Watched threads"
-        description={`These report to the voice thread even when every-thread reports are off. Threads it delegated report on their own. Up to ${VOICE_WATCH_LIMIT}.`}
+        description={`These report to the voice thread even when thread activity reports are off. The voice thread gets its own delegated task results separately. Up to ${VOICE_WATCH_LIMIT}.`}
         control={
           <Select
             value={null}

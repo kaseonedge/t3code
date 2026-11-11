@@ -53,15 +53,15 @@ key never reaches a client.
   Late speech would be transcribed after the moment it belonged to and interrupt the wrong thing.
 - **A cleared speech stays cleared.** The playback buffer drops frames for a speech id it has
   cleared, because audio already on the wire arrives after the `clear`.
-- **Other threads report through the notification channel.** [`VoiceWatch.ts`](../../apps/server/src/voice/VoiceWatch.ts)
-  tells the voice thread when a listed thread's run ends or it opens a request only the user can
-  settle, as an ordinary server-created queued notification. It uses the `system` source on
-  purpose, so the orchestrator's existing rule decides delivery and nothing here promotes it to a
-  steer. The command id is derived from the run or request, so a repeated event is one notice.
-  Subagents, side chats and remote tasks are skipped because their parent already hears; the voice
-  thread and the watchdog thread are skipped so a report cannot cause another report. A request
-  notice carries no request contents, only where to read them, and both notices say they are not
-  leave to act. Events are not replayed: one that arrives while the server is down is not reported.
+- **Other threads report through the notification channel.** [VoiceWatch](../../apps/server/src/voice/VoiceWatch.ts)
+  queues ordinary runs and side chats from their run events, and delegated results
+  from the parent's task record after settlement. The remote follower records
+  results on the parent but leaves live requests on the executing environment.
+  The voice thread's own delegated results use the existing completion channel.
+  Stable command ids deduplicate each report. The cursor starts at the log tail
+  on first startup and resumes from retained events on later starts. A settled
+  request can cancel its queued notice on the original destination using its
+  command receipt, including after a restart or a change of voice thread.
 - **Memory is the voice thread's.** [`MemoryService.ts`](../../apps/server/src/memory/MemoryService.ts)
   refuses other threads, because anything written there is read back into a later conversation.
   The secret filter runs on every write and errs toward refusing.
