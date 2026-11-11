@@ -91,6 +91,7 @@ type Input =
       readonly type: "say";
       readonly item: SpeechItem;
       readonly accepted: Deferred.Deferred<boolean>;
+      readonly onAccepted: (() => void) | undefined;
     }
   | { readonly type: "cleared"; readonly speechId: number; readonly playedMs: number }
   | { readonly type: "timer"; readonly key: TimerKey }
@@ -117,9 +118,11 @@ export interface VoiceSession {
   readonly feedAudio: (pcm: Uint8Array) => Effect.Effect<void>;
   /** The client reports how much of an interrupted speech it played. */
   readonly cleared: (speechId: number, playedMs: number) => Effect.Effect<void>;
+  /** `onAccepted` runs as the speech joins the queue, before anything else can observe it. */
   readonly say: (
     text: string,
     priority: VoiceSayPriority,
+    onAccepted?: () => void,
   ) => Effect.Effect<VoiceSayResult, VoiceSpeechQueueFullError>;
   readonly status: Effect.Effect<SessionStatus>;
   /** Completes when a speech connection fails; the conversation cannot continue. */
@@ -403,6 +406,7 @@ export const makeVoiceSession = Effect.fn("VoiceSession.make")(function* (
           break;
         }
         enqueue(input.item);
+        input.onAccepted?.();
         yield* Deferred.succeed(input.accepted, true);
         yield* setTimer(`held:${input.item.id}`, HELD_REPORT_DELAY, {
           type: "held",
@@ -473,18 +477,20 @@ export const makeVoiceSession = Effect.fn("VoiceSession.make")(function* (
   ).pipe(Effect.forkIn(scope));
   yield* Effect.forever(Queue.take(inbox).pipe(Effect.flatMap(handle))).pipe(Effect.forkIn(scope));
 
-  const say: VoiceSession["say"] = Effect.fn("VoiceSession.say")(function* (text, priority) {
-    const item: SpeechItem = {
-      id: ++itemCounter,
-      text,
-      priority,
-      result: yield* Deferred.make<VoiceSayResult>(),
-    };
-    const accepted = yield* Deferred.make<boolean>();
-    yield* Queue.offer(inbox, { type: "say", item, accepted });
-    if (!(yield* Deferred.await(accepted))) return yield* new VoiceSpeechQueueFullError();
-    return yield* Deferred.await(item.result);
-  });
+  const say: VoiceSession["say"] = Effect.fn("VoiceSession.say")(
+    function* (text, priority, onAccepted) {
+      const item: SpeechItem = {
+        id: ++itemCounter,
+        text,
+        priority,
+        result: yield* Deferred.make<VoiceSayResult>(),
+      };
+      const accepted = yield* Deferred.make<boolean>();
+      yield* Queue.offer(inbox, { type: "say", item, accepted, onAccepted });
+      if (!(yield* Deferred.await(accepted))) return yield* new VoiceSpeechQueueFullError();
+      return yield* Deferred.await(item.result);
+    },
+  );
 
   return {
     feedAudio: transcriber.send,
