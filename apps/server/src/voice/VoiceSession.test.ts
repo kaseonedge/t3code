@@ -276,13 +276,23 @@ it.effect("refuses more speech than the user could sit through", () =>
   Effect.gen(function* () {
     const voice = yield* start();
     yield* voice.hear({ type: "partial", text: "let me think" });
+    let accepted = 0;
+    const count = () => void accepted++;
+    yield* voice.session
+      .say("First thing.", "announcement", count)
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    // Told as it joins the queue, long before it is said: the user is still talking.
+    expect(yield* voice.session.status).toMatchObject({ queued: 1, speaking: null });
+    expect(accepted).toBe(1);
     yield* Effect.forEach(
-      Array.from({ length: MAX_QUEUED_SPEECH }),
+      Array.from({ length: MAX_QUEUED_SPEECH - 1 }),
       () => voice.say("One more thing.", "announcement"),
       { discard: true },
     );
-    const refused = yield* Effect.flip(voice.session.say("Too much.", "announcement"));
+    const refused = yield* Effect.flip(voice.session.say("Too much.", "announcement", count));
     expect(refused._tag).toBe("VoiceSpeechQueueFullError");
+    // A refused speech is never reported as accepted, so no caller records it as said.
+    expect(accepted).toBe(1);
   }).pipe(Effect.scoped),
 );
 

@@ -279,10 +279,13 @@ const make = Effect.gen(function* () {
         return yield* new VoiceSayRefusedError({ reason: "too-long", detail: violation });
       if (active === undefined)
         return yield* new VoiceSayRefusedError({ reason: "no-conversation" });
-      saidByTool = true;
-      unanswered = false;
+      // Marked answered only as the speech is accepted: a refused call spoke nothing, so the
+      // written reply and the fallback must still be heard, whatever arrives meanwhile.
       return yield* active
-        .say(input.text.trim(), input.priority ?? "reply")
+        .say(input.text.trim(), input.priority ?? "reply", () => {
+          saidByTool = true;
+          unanswered = false;
+        })
         .pipe(Effect.mapError(() => new VoiceSayRefusedError({ reason: "queue-full" })));
     },
   );

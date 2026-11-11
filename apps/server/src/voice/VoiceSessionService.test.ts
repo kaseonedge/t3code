@@ -22,6 +22,7 @@ import { expect } from "vite-plus/test";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { MAX_QUEUED_SPEECH } from "./VoiceSession.ts";
 import * as VoiceSessionService from "./VoiceSessionService.ts";
 import {
   type VoiceSpeechConfig,
@@ -358,6 +359,32 @@ it.effect("a turn that ends with nothing said aloud is not met with silence", ()
     yield* test.reply("Closing note.");
     expect(yield* test.hears()).toBe("Closing note.");
     expect(test.spoken).toHaveLength(4);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a voice_say refused for a full queue does not silence the written reply", () =>
+  Effect.gen(function* () {
+    const test = yield* setup({}, { holdSpeech: true });
+    const session = yield* test.open;
+    yield* test.connections[0]!.sinks.onTranscriber({ type: "committed", text: "Status?" });
+    yield* test.next("acknowledged");
+    // More than the queue holds, none of it from the voice thread's tool.
+    for (let index = 0; index <= MAX_QUEUED_SPEECH; index++)
+      yield* session
+        .say(`Note ${index}.`, "announcement")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* test.voice.status(router);
+    expect(yield* Effect.flip(test.voice.say(router, { text: "All green." }))).toMatchObject({
+      reason: "queue-full",
+    });
+    // Each held note ends on its own idle timer, one after another.
+    for (let note = 0; note <= MAX_QUEUED_SPEECH * 2; note++) yield* TestClock.adjust("10 seconds");
+    expect(test.spoken).toHaveLength(MAX_QUEUED_SPEECH);
+    // Nothing was said for this turn by the tool, so its failure is still reported aloud.
+    yield* test.ends("failed");
+    yield* test.voice.status(router);
+    yield* TestClock.adjust("10 seconds");
+    expect(test.spoken.at(-1)).toBe("That didn't work. The thread has the details.");
   }).pipe(Effect.scoped),
 );
 
