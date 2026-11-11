@@ -3,6 +3,7 @@ import {
   CommandId,
   isSecretReference,
   MessageId,
+  type OrchestrationV2Run,
   type ThreadId,
   VOICE_MESSAGE_ID_PREFIX,
   VOICE_UTTERANCE_PREFIX,
@@ -40,6 +41,12 @@ const SETUP_REASONS: ReadonlySet<string> = new Set([
   "no-router",
   "already-active",
 ]);
+
+// A turn the user stopped is left silent: they know why nothing came.
+const SILENT_ENDINGS: Partial<Record<OrchestrationV2Run["status"], string>> = {
+  completed: "I'm done, with nothing to read out. The thread has the details.",
+  failed: "That didn't work. The thread has the details.",
+};
 
 export class VoiceSayRefusedError extends Schema.TaggedError<VoiceSayRefusedError>()(
   "VoiceSayRefusedError",
@@ -110,6 +117,8 @@ const make = Effect.gen(function* () {
     );
   // Whether the voice thread has spoken through `voice_say` since the user's last turn.
   let saidByTool = false;
+  // Whether the user's last turn has been met with nothing aloud yet.
+  let unanswered = false;
   let owner: symbol | undefined;
   let active: VoiceSession | undefined;
   const release = (claim: symbol) => {
@@ -124,6 +133,7 @@ const make = Effect.gen(function* () {
   const dispatchUtterance = (threadId: ThreadId) =>
     Effect.fn("VoiceSessionService.dispatchUtterance")(function* (text: string) {
       saidByTool = false;
+      unanswered = true;
       const id = yield* random.uuidV4();
       yield* threads
         .dispatch({
@@ -171,9 +181,16 @@ const make = Effect.gen(function* () {
       }),
     ).pipe(Effect.forkIn(scope));
     yield* Stream.runForEach(orchestrator.streamDomainEvents, (event) => {
+      if (event.threadId !== routerThreadId) return Effect.void;
+      if (event.type === "run.updated") {
+        // Silence after a question reads as a broken call, so a turn that ends unheard says so.
+        const ending = unanswered ? SILENT_ENDINGS[event.payload.status] : undefined;
+        if (ending === undefined) return Effect.void;
+        unanswered = false;
+        return Queue.offer(replies, [ending]);
+      }
       if (
         event.type !== "message.updated" ||
-        event.threadId !== routerThreadId ||
         event.payload.role !== "assistant" ||
         event.payload.streaming ||
         seen.has(event.payload.id)
@@ -181,7 +198,9 @@ const make = Effect.gen(function* () {
         return Effect.void;
       seen.add(event.payload.id);
       const chunks = saidByTool ? [] : spokenForm(event.payload.text);
-      return chunks.length === 0 ? Effect.void : Queue.offer(replies, chunks);
+      if (chunks.length === 0) return Effect.void;
+      unanswered = false;
+      return Queue.offer(replies, chunks);
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("voice replies stopped being read aloud", { cause }),
@@ -215,6 +234,7 @@ const make = Effect.gen(function* () {
     });
     active = session;
     saidByTool = false;
+    unanswered = false;
     yield* speakReplies(session, voiceRouterThreadId);
     return { ...session, routerThreadId: voiceRouterThreadId };
   });
@@ -260,6 +280,7 @@ const make = Effect.gen(function* () {
       if (active === undefined)
         return yield* new VoiceSayRefusedError({ reason: "no-conversation" });
       saidByTool = true;
+      unanswered = false;
       return yield* active
         .say(input.text.trim(), input.priority ?? "reply")
         .pipe(Effect.mapError(() => new VoiceSayRefusedError({ reason: "queue-full" })));

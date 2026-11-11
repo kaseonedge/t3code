@@ -130,6 +130,9 @@ const setup = Effect.fn("test.voiceService.setup")(function* (
         text,
       },
     } as never);
+  /** A run on the voice thread, or another thread, ends. */
+  const ends = (status: string, threadId: ThreadId = router) =>
+    Queue.offer(events, { type: "run.updated", threadId, payload: { status } } as never);
   const next = <T extends VoiceSessionEvent["type"]>(type: T) =>
     Queue.take(frames).pipe(
       Effect.repeat({ until: (frame) => frame.type === type }),
@@ -154,6 +157,7 @@ const setup = Effect.fn("test.voiceService.setup")(function* (
     frames,
     spoken,
     reply,
+    ends,
     next,
     hears,
     open: voice.open(io),
@@ -316,6 +320,44 @@ it.effect("does not repeat aloud a reply the voice thread already spoke with voi
     yield* test.reply("Docs are done too.");
     expect(yield* test.hears()).toBe("Docs are done too.");
     expect(test.spoken).toEqual(["The build passed.", "Docs are done too."]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a turn that ends with nothing said aloud is not met with silence", () =>
+  Effect.gen(function* () {
+    const test = yield* setup();
+    yield* test.open;
+    const asks = Effect.fn("test.voiceService.asks")(function* (text: string) {
+      yield* test.connections[0]!.sinks.onTranscriber({ type: "committed", text });
+      yield* test.next("acknowledged");
+    });
+    // Nobody asked anything yet, so a run ending is not the user's business.
+    yield* test.ends("completed");
+
+    yield* asks("Run the migration.");
+    // Still working, another thread's failure, and a turn the user stopped: all stay quiet.
+    yield* test.ends("running");
+    yield* test.ends("failed", ThreadId.make("worker"));
+    yield* test.ends("interrupted");
+    yield* test.ends("failed");
+    expect(yield* test.hears()).toBe("That didn't work. The thread has the details.");
+    // Said once per turn.
+    yield* test.ends("failed");
+
+    yield* asks("Tidy the branch.");
+    yield* test.ends("completed");
+    expect(yield* test.hears()).toBe(
+      "I'm done, with nothing to read out. The thread has the details.",
+    );
+
+    // A turn that was answered ends without comment.
+    yield* asks("Thanks.");
+    yield* test.reply("Any time.");
+    expect(yield* test.hears()).toBe("Any time.");
+    yield* test.ends("completed");
+    yield* test.reply("Closing note.");
+    expect(yield* test.hears()).toBe("Closing note.");
+    expect(test.spoken).toHaveLength(4);
   }).pipe(Effect.scoped),
 );
 

@@ -45,7 +45,8 @@ Your words appear above the composer as you say them, and each finished phrase
 is saved to the voice thread as one of your own messages. The thread's reply
 appears there as it is written and is read aloud when it is complete. From
 another thread, the same strip shows what the bot is saying. Long replies are
-read up to about half a minute, then "The rest is in the thread."
+read up to about half a minute, then "The rest is in the thread." If a turn fails
+or finishes with nothing to read out, the bot says so instead of staying silent.
 
 Just speak. The bot is cut off as soon as you say real words; listening sounds
 such as "mm-hm" do not interrupt it. These phrases are handled on the spot,
