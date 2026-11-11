@@ -4,8 +4,10 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  NodeId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
+  OrchestrationV2RuntimeRequest,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -17,6 +19,8 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
@@ -128,23 +132,48 @@ const routerNotices = Effect.gen(function* () {
   return projection.messages.filter((message) => message.notification !== undefined);
 });
 
-/** `threadId` stops to ask the user something, or the request is settled. */
-const request = (
+const encodeRequest = Schema.encodeSync(Schema.fromJsonString(OrchestrationV2RuntimeRequest));
+
+/**
+ * `threadId` stops to ask the user something, or the request is settled. `recorded` is what the
+ * projection holds by the time the event is read, which can already be newer than the event.
+ */
+const request = Effect.fn("test.voiceWatch.request")(function* (
   threadId: ThreadId,
   status: "pending" | "resolved",
   kind: "command" | "user_input" | "dynamic_tool_call" = "command",
-) =>
-  Effect.map(
-    DateTime.now,
-    (occurredAt) =>
-      ({
-        id: EventId.make(`event:${threadId}:request:${kind}:${status}`),
-        type: "runtime-request.updated",
-        threadId,
-        occurredAt,
-        payload: { id: RuntimeRequestId.make(`request:${threadId}:${kind}`), kind, status },
-      }) as unknown as OrchestrationV2DomainEvent,
-  );
+  recorded: "pending" | "resolved" = status,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const occurredAt = yield* DateTime.now;
+  const payload = {
+    id: RuntimeRequestId.make(`request:${threadId}:${kind}`),
+    nodeId: NodeId.make(`node:${threadId}`),
+    providerTurnId: null,
+    nativeRequestRef: null,
+    kind,
+    status,
+    responseCapability: { type: "message" as const },
+    createdAt: occurredAt,
+    resolvedAt: null,
+  };
+  const json = encodeRequest({ ...payload, status: recorded });
+  yield* sql`
+    INSERT INTO orchestration_v2_projection_runtime_requests
+      (runtime_request_id, thread_id, node_id, kind, status, created_at, payload_json)
+    VALUES (${payload.id}, ${threadId}, ${payload.nodeId}, ${kind}, ${recorded},
+      ${DateTime.formatIso(occurredAt)}, ${json})
+    ON CONFLICT (runtime_request_id)
+    DO UPDATE SET status = excluded.status, payload_json = excluded.payload_json
+  `;
+  return {
+    id: EventId.make(`event:${threadId}:request:${kind}:${status}`),
+    type: "runtime-request.updated",
+    threadId,
+    occurredAt,
+    payload,
+  } satisfies OrchestrationV2DomainEvent;
+});
 
 it.effect("tells the voice thread once when any thread's run ends, with a link to it", () =>
   Effect.gen(function* () {
@@ -206,8 +235,10 @@ it.effect("a thread waiting on the user is reported as that, apart from a finish
     yield* createThread(router, "Voice");
     yield* createThread(other, "Deploy");
 
-    // A tool call the app answers itself is not the user's to settle.
+    // A tool call the app answers itself is not the user's to settle, and a request already
+    // settled by the time its event is read is not worth a turn.
     yield* watch.handle(yield* request(other, "pending", "dynamic_tool_call"));
+    yield* watch.handle(yield* request(other, "pending", "command", "resolved"));
     assert.deepEqual(yield* routerNotices, []);
 
     const asked = yield* request(other, "pending");
@@ -235,7 +266,11 @@ it.effect("a thread waiting on the user is reported as that, apart from a finish
         projection.runs.filter((run) => run.status === "queued"),
       );
     assert.lengthOf(yield* queued(), 1);
-    // Answered before the voice thread reached it: the stale notice is withdrawn, not delivered.
+    // Answered before the voice thread reached it: the stale notice is withdrawn, not delivered,
+    // even though the user has since turned reports off.
+    yield* (yield* ServerSettings.ServerSettingsService).updateSettings({
+      voiceAnnounceAllThreads: false,
+    });
     yield* watch.handle(yield* request(other, "resolved", "user_input"));
     assert.deepEqual(yield* queued(), []);
   }).pipe(Effect.provide(layerTest)),

@@ -213,30 +213,42 @@ const make = Effect.gen(function* () {
     );
   });
 
+  // Where each request was reported, so a settled one is withdrawn from the thread that holds
+  // the notice even after the voice thread or the source's eligibility changed.
+  const reportedTo = new Map<string, ThreadId>();
+
+  /** Answered before the voice thread got to it: an unsent notice would only mislead. */
+  const withdraw = Effect.fnUntraced(function* (key: string) {
+    const router = reportedTo.get(key) ?? (yield* settings.getSettings).voiceRouterThreadId;
+    reportedTo.delete(key);
+    if (router === null) return;
+    const messageId = MessageId.make(`message:voice-watch:${key}`);
+    const { runs } = yield* projections.getThreadRecords(router, ["runs"]);
+    const queued = runs.find((run) => run.status === "queued" && run.userMessageId === messageId);
+    if (queued === undefined) return;
+    yield* engine.dispatch({
+      type: "queued-run.cancel",
+      commandId: CommandId.make(`server:voice-watch-cancel:${key}`),
+      threadId: router,
+      runId: queued.id,
+    });
+  });
+
   const onRequest = Effect.fnUntraced(function* (
     event: Extract<OrchestrationV2DomainEvent, { type: "runtime-request.updated" }>,
   ) {
     const need = NEEDS[event.payload.kind];
     if (need === undefined) return;
+    const key = `${event.threadId}:request:${event.payload.id}`;
+    // Events are published after their batch commits, so this one may already be out of date.
+    const request = yield* projections.getRuntimeRequest(event.threadId, event.payload.id);
+    if (event.payload.status !== "pending" || request?.status !== "pending")
+      return yield* withdraw(key);
     const thread = yield* projections.getThread(event.threadId);
     const router = yield* audience(thread);
     if (router === undefined) return;
-    const key = `${event.threadId}:request:${event.payload.id}`;
-    if (event.payload.status !== "pending") {
-      // Answered before the voice thread got to it: an unsent notice would only mislead.
-      const messageId = MessageId.make(`message:voice-watch:${key}`);
-      const { runs } = yield* projections.getThreadRecords(router, ["runs"]);
-      const queued = runs.find((run) => run.status === "queued" && run.userMessageId === messageId);
-      if (queued !== undefined)
-        yield* engine.dispatch({
-          type: "queued-run.cancel",
-          commandId: CommandId.make(`server:voice-watch-cancel:${key}`),
-          threadId: router,
-          runId: queued.id,
-        });
-      return;
-    }
     const { title, link } = describe(thread);
+    reportedTo.set(key, router);
     yield* tell(
       router,
       key,
