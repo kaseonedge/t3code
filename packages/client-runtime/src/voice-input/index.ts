@@ -22,6 +22,7 @@ export {
   getEnvironmentSpeechStatus,
   getEnvironmentMediaSocketUrl,
   getEnvironmentSpeechStreamUrl,
+  linkEnvironmentSpeechModels,
   postProcessEnvironmentTranscript,
   removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
