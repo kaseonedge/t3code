@@ -1,7 +1,12 @@
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { authScopeResponse, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  authScopeResponse,
+  AuthStandardClientScopes,
+  VOICE_REALTIME_PATH,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -16,6 +21,12 @@ import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import { HttpClient, HttpRouter } from "effect/http";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { voiceRealtimeRouteLayer } from "../voice/voiceRealtimeRoute.ts";
 
 const TEST_SERVER_PORT = 13_773;
 
@@ -76,6 +87,46 @@ const requestMetadata = {
 it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
   "EnvironmentAuth.layer",
   (it) => {
+    it.effect("rejects restricted MCP and peer link tokens at the realtime media route", () =>
+      Effect.gen(function* () {
+        const auth = yield* EnvironmentAuth.EnvironmentAuth;
+        const noProvider = HttpClient.make(() => Effect.die("No provider request expected"));
+        const routes = voiceRealtimeRouteLayer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(EnvironmentAuth.EnvironmentAuth, auth),
+              Layer.mock(SecretResolver.SecretResolver)({}),
+              Layer.mock(ThreadManagement.ThreadManagementService)({}),
+              Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({}),
+              ServerSettings.layerTest({}),
+              Layer.succeed(HttpClient.HttpClient, noProvider),
+            ),
+          ),
+        );
+        const web = yield* Effect.acquireRelease(
+          Effect.sync(() => HttpRouter.toWebHandler(routes, { disableLogger: true })),
+          (handler) => Effect.promise(() => handler.dispose()),
+        );
+        for (const peerLink of [false, true]) {
+          const { token } = yield* auth.issueMcpClientSession({
+            label: "fixture",
+            access: "approval-required",
+            peerLink,
+            client: requestMetadata,
+          });
+          const result = yield* Effect.promise(() =>
+            web.handler(
+              new Request(`http://localhost:${TEST_SERVER_PORT}${VOICE_REALTIME_PATH}`, {
+                headers: { authorization: `Bearer ${token}`, upgrade: "websocket" },
+              }),
+              Context.make(HttpClient.HttpClient, noProvider),
+            ),
+          );
+          expect(result.status).toBe(401);
+        }
+      }).pipe(Effect.scoped, Effect.provide(layerEnvironmentAuth())),
+    );
+
     it.effect("uses the reusable dev cookie without overriding a normal scoped cookie", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;

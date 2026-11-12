@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import { useSyncExternalStore } from "react";
 import { randomUUID } from "../lib/utils";
+import { openRealtimeConversationRecord } from "./realtimeConversationRecord";
 import { openElevenRealtimeConversation } from "./elevenRealtimeConversation";
 import workletUrl from "./pcmWorklet.ts?worker&url";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
@@ -185,38 +186,12 @@ export async function startVoiceConversation(input: {
       },
     };
     if (input.realtimeThreadId) {
-      const storageKey = `t3.voice-work.${input.environmentId}.${input.realtimeThreadId}`;
-      const pending = new Set<string>();
-      try {
-        const saved: unknown = JSON.parse(sessionStorage.getItem(storageKey) ?? "[]");
-        if (Array.isArray(saved))
-          for (const id of saved.slice(0, 24))
-            if (typeof id === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(id)) pending.add(id);
-      } catch {
-        // A restricted storage context can still run a conversation.
-      }
-      const save = () => {
-        try {
-          sessionStorage.setItem(storageKey, JSON.stringify([...pending].slice(-24)));
-        } catch {
-          /* Storage may be unavailable. */
-        }
-      };
+      const storageKey = `t3.voice-realtime.v1.${input.environmentId}.${input.realtimeThreadId}`;
       conversation = openElevenRealtimeConversation({
         ...options,
         threadId: input.realtimeThreadId,
         newOperationId: randomUUID,
-        operations: {
-          pending: () => [...pending],
-          remember: (id) => {
-            pending.add(id);
-            save();
-          },
-          forget: (id) => {
-            pending.delete(id);
-            save();
-          },
-        },
+        record: openRealtimeConversationRecord(localStorage, storageKey, Date.now),
       });
     } else {
       conversation = openVoiceConversation(options);

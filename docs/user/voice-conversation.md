@@ -79,6 +79,10 @@ minutes. Use the standard voice button to return to the original conversation
 mode. Realtime is available with the global endpoint and requires zero retention
 to be off.
 
+Realtime keeps recent conversation text and unfinished task receipts in this
+browser for up to seven days. Starting Realtime again in the same thread can
+restore that context and recover results whose audio did not finish playing.
+
 ## Hear about other work
 
 The voice thread reports finished runs and requests for your approval or answer
