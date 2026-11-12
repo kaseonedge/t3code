@@ -85,8 +85,10 @@ minutes. Realtime requires the global endpoint and zero retention to be off.
 The standard voice button uses the voice thread selected in Settings.
 
 Realtime keeps a short record of recent exchanges and unfinished tasks in this
-browser for up to seven days. Reopen the same mode to recover results whose
-audio did not finish playing. For single-chat mode, reopen the starting chat.
+browser for up to seven days. Accepted tasks keep running after the voice
+connection expires. Their results go to the chat where they were requested,
+even if you switched chats. Reopen the same mode to hear results whose audio
+did not finish playing. For single-chat mode, reopen the starting chat.
 
 ## Hear about other work
 

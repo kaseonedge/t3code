@@ -29,10 +29,13 @@ const makeStorage = () => {
   };
 };
 
-const setup = (storage = makeStorage()) => {
+const setup = (
+  storage = makeStorage(),
+  options: { threadId?: ThreadId; crossThread?: boolean; now?: () => number } = {},
+) => {
   const control = new FakeSocket();
   const provider = new FakeSocket();
-  const threadId = ThreadId.make("thread:voice");
+  const threadId = options.threadId ?? ThreadId.make("thread:voice");
   const playback = {
     enqueue: vi.fn(),
     clear: vi.fn(() => 123),
@@ -40,12 +43,13 @@ const setup = (storage = makeStorage()) => {
     isDrained: vi.fn(() => false),
     adjustVolume: vi.fn(() => 1),
   };
-  const record = openRealtimeConversationRecord(storage, "test", () => 0);
+  const record = openRealtimeConversationRecord(storage, "test", options.now ?? (() => 0));
   record.remember("previous");
   let count = 0;
   const conversation = openElevenRealtimeConversation({
     url: "wss://t3.invalid",
     threadId,
+    ...(options.crossThread ? { crossThread: true } : {}),
     playback,
     canSend: () => true,
     onState: vi.fn(),
@@ -583,4 +587,136 @@ it("retries unacknowledged transcript writes after reconnect with the same IDs",
   next.conversation.stop();
   const last = setup(first.storage);
   expect(last.control.sent).not.toContainEqual(expect.objectContaining({ type: "transcript" }));
+});
+
+it("speaks the 370-second task result once across expiry and reconnect in a different chat", () => {
+  vi.useFakeTimers();
+  try {
+    let now = 0;
+    const advance = (ms: number) => {
+      now += ms;
+      vi.advanceTimersByTime(ms);
+    };
+    const origin = ThreadId.make("voice-origin");
+    const switched = ThreadId.make("voice-new-primary");
+    const options = { crossThread: true, now: () => now };
+    const first = setup(makeStorage(), { ...options, threadId: origin });
+    const talk = (id: string) =>
+      first.provider.receive({ type: "input_audio_buffer.committed", item_id: id });
+    talk("initial-request");
+    const call = {
+      type: "response.function_call_arguments.done",
+      call_id: "submit-1",
+      event_id: "call-1",
+      name: "queue_work",
+      arguments: '{"text":"Check the build"}',
+    };
+    first.provider.receive(call);
+    first.provider.receive(call);
+    expect(
+      first.control.sent.filter((event) => (event as { type: string }).type === "submit"),
+    ).toHaveLength(1);
+    const receipt = {
+      type: "receipt",
+      operationId: "work-1",
+      runId: "run:thread:voice%3A1",
+      threadId: origin,
+      status: "queued",
+      link: "t3-thread://v2/env/voice-origin",
+    };
+    first.control.receive(receipt);
+    first.conversation.selectThread(switched);
+    first.control.receive({ type: "target", threadId: switched, title: "New primary" });
+    setTimeout(() => first.provider.onclose?.(), 300_000);
+    advance(300_000);
+    expect(first.control.readyState).toBe(3);
+
+    const before = setup(first.storage, { ...options, threadId: switched });
+    expect(before.control.sent).toContainEqual({
+      type: "recover",
+      operationId: "work-1",
+      threadId: origin,
+    });
+    before.control.receive({ ...receipt, status: "running" });
+    before.provider.receive({ type: "input_audio_buffer.committed", item_id: "new-speech" });
+    before.provider.receive(call);
+    expect(before.playback.enqueue).not.toHaveBeenCalled();
+    advance(30_000);
+    before.conversation.stop();
+
+    advance(40_000);
+    const after = setup(first.storage, { ...options, threadId: switched });
+    expect(after.control.sent).toContainEqual({
+      type: "recover",
+      operationId: "work-1",
+      threadId: origin,
+    });
+    after.control.receive({ ...receipt, status: "completed" });
+    const result = {
+      type: "result",
+      operationId: "work-1",
+      resultId: `voice-result:${receipt.runId}`,
+      sourceRunId: receipt.runId,
+      conversationThreadId: origin,
+      threadId: origin,
+      threadTitle: "Original chat",
+      taskLabel: "Check the build",
+      text: "Build passed.",
+      status: "completed",
+      link: receipt.link,
+    };
+    after.control.receive(result);
+    after.control.receive(result);
+    expect(
+      after.provider.sent.filter((event) => (event as { type: string }).type === "response.create"),
+    ).toHaveLength(1);
+    expect(JSON.stringify(after.provider.sent)).toContain("Original chat");
+    after.provider.receive({
+      type: "response.created",
+      response: { id: "reply", metadata: { t3ResultId: result.resultId } },
+    });
+    const pcm = {
+      type: "response.output_audio.delta",
+      response_id: "reply",
+      item_id: "reply-item",
+      delta: "AQI=",
+      event_id: "pcm-1",
+    };
+    after.provider.receive(pcm);
+    after.provider.receive(pcm);
+    after.provider.receive({
+      type: "response.output_audio_transcript.done",
+      item_id: "reply-item",
+      transcript: "Check the build in Original chat passed.",
+    });
+    after.provider.receive({
+      type: "response.done",
+      response: { id: "reply", status: "completed" },
+    });
+    expect(after.playback.enqueue).toHaveBeenCalledOnce();
+    expect(after.record.pending()).toContain("work-1");
+    after.playback.isDrained.mockReturnValue(true);
+    after.conversation.feed(new Float32Array());
+    expect(after.record.pending()).not.toContain("work-1");
+    expect(after.control.sent).not.toContainEqual(
+      expect.objectContaining({ type: "transcript", role: "assistant" }),
+    );
+    after.conversation.stop();
+
+    const settled = setup(first.storage, { ...options, threadId: switched });
+    expect(settled.control.sent).not.toContainEqual(
+      expect.objectContaining({ operationId: "work-1" }),
+    );
+    settled.control.receive({ ...receipt, status: "completed" });
+    settled.control.receive(result);
+    expect(settled.provider.sent).not.toContainEqual(
+      expect.objectContaining({ type: "response.create" }),
+    );
+    expect([before, after, settled].flatMap(({ control }) => control.sent)).not.toContainEqual(
+      expect.objectContaining({ type: "submit" }),
+    );
+    settled.conversation.stop();
+  } finally {
+    vi.useRealTimers();
+  }
 });

@@ -20,6 +20,9 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
+import * as Scope from "effect/Scope";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Result from "effect/Result";
@@ -34,6 +37,11 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { bindRealtimeVoiceWork } from "../voice/VoiceRealtimeWork.ts";
+import { bindVoiceThreadWork } from "../voice/VoiceThreadWork.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -1913,4 +1921,134 @@ it.effect("persists deduplicated voice turns in their selected chats without sta
       assert.isEmpty(projection.runs);
     }
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "delivers exactly one durable result for a voice task that outlives the control socket",
+  () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.Scope;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const events = yield* EventSink.EventSinkV2;
+      const origin = ThreadId.make("voice-origin");
+      const other = ThreadId.make("voice-new-primary");
+      const worker = ThreadId.make("voice-worker");
+      const projectId = ProjectId.make("voice-project");
+      for (const threadId of [origin, other, worker]) {
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`create:${threadId}`),
+          threadId,
+          projectId,
+          title: threadId,
+          modelSelection,
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+      }
+      const target = { projectId, threadId: worker };
+      const work = bindVoiceThreadWork(threads, target);
+      const receipt = yield* work.submit("long-task", "Check the build", origin);
+      const duplicate = yield* work.submit("long-task", "Check the build", origin);
+      assert.equal(duplicate.runId, receipt.runId);
+      const unrelated = yield* work.submit("other-task", "Review the docs", other);
+      const initial = yield* threads.getProjectThreadRecords(target, ["runs"]);
+      const taskRun = initial.runs.find((run) => run.id === receipt.runId)!;
+      const unrelatedRun = initial.runs.find((run) => run.id === unrelated.runId)!;
+      const realtime = bindRealtimeVoiceWork(threads, scope);
+      const input = {
+        target,
+        runId: receipt.runId,
+        origin,
+        title: "Worker",
+        link: "[Worker](t3-thread://v2/env/voice-worker)",
+        taskText: receipt.taskText,
+      };
+      const first = yield* realtime.watch(input);
+      const socket = yield* first.pipe(Effect.timeoutOption("310 seconds"), Effect.forkChild);
+      yield* TestClock.adjust("310 seconds");
+      assert.isTrue(Option.isNone(yield* Fiber.join(socket)));
+
+      const recovered = yield* work.recover("long-task");
+      assert.deepInclude(recovered, { runId: receipt.runId, senderThreadId: origin });
+      yield* realtime.record(other, "new-primary-message", "user", "I switched chats.");
+      const reconnected = yield* realtime.watch(input);
+      const secondSocket = yield* reconnected.pipe(Effect.forkChild);
+      yield* TestClock.adjust("60 seconds");
+      yield* Fiber.interrupt(secondSocket);
+
+      const now = yield* DateTime.now;
+      const resultEvents = [taskRun, unrelatedRun].flatMap((run, index) => [
+        {
+          id: EventId.make(`voice:finished:${index}`),
+          type: "run.updated" as const,
+          threadId: worker,
+          runId: run.id,
+          occurredAt: now,
+          payload: { ...run, status: "completed" as const, completedAt: now, queuePosition: null },
+        },
+        {
+          id: EventId.make(`voice:reply:${index}`),
+          type: "message.updated" as const,
+          threadId: worker,
+          runId: run.id,
+          occurredAt: now,
+          payload: {
+            id: MessageId.make(`voice:worker-result:${index}`),
+            threadId: worker,
+            runId: run.id,
+            nodeId: null,
+            role: "assistant" as const,
+            text: index === 0 ? "Build passed." : "Docs updated.",
+            createdBy: "agent" as const,
+            creationSource: "provider" as const,
+            attachments: [],
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      ]);
+      yield* events.write({ events: resultEvents });
+      const delivered = yield* first;
+      assert.deepInclude(delivered, {
+        sourceRunId: receipt.runId,
+        conversationThreadId: origin,
+        threadId: worker,
+        taskLabel: "Check the build",
+        text: "Build passed.",
+      });
+      const afterCompletion = yield* bindRealtimeVoiceWork(threads, scope).watch(input);
+      assert.deepEqual(yield* afterCompletion, delivered);
+      const primary = yield* orchestrator.getThreadProjection(origin);
+      const switched = yield* orchestrator.getThreadProjection(other);
+      assert.lengthOf(primary.messages, 1);
+      assert.include(primary.messages[0]?.text, "Build passed.");
+      assert.deepEqual(
+        switched.messages.map((message) => message.text),
+        ["I switched chats."],
+      );
+      const final = yield* threads.getProjectThreadRecords(target, ["runs", "messages"]);
+      assert.lengthOf(
+        final.runs.filter((run) => run.id === receipt.runId),
+        1,
+      );
+      assert.lengthOf(
+        final.messages.filter((message) => message.text === "Check the build"),
+        1,
+      );
+    }).pipe(
+      Effect.provide(
+        ThreadManagement.layer.pipe(
+          Layer.provideMerge(layerTest),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+        ),
+      ),
+    ),
 );
