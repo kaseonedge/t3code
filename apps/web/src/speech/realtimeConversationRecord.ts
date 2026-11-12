@@ -23,6 +23,7 @@ const Operation = Schema.Struct({
   id: Key,
   phase: Phase,
   resultId: Schema.optionalKey(ResultId),
+  providerCallId: Schema.optionalKey(Key),
   threadId: Schema.optionalKey(ThreadId),
 });
 const decode = Schema.decodeUnknownOption(
@@ -93,7 +94,8 @@ export function openRealtimeConversationRecord(
   return {
     pending: () => operations.filter((entry) => entry.phase !== "played").map(({ id }) => id),
     target: (id: string) => operations.find((entry) => entry.id === id)?.threadId,
-    remember(id: string, threadId?: ThreadId) {
+    hasCall: (callId: string) => operations.some((entry) => entry.providerCallId === callId),
+    remember(id: string, threadId?: ThreadId, providerCallId?: string) {
       if (!isKey(id)) return false;
       if (operations.some((entry) => entry.id === id)) return true;
       if (operations.length >= 24) {
@@ -101,7 +103,12 @@ export function openRealtimeConversationRecord(
         if (!played) return false;
         operations = operations.filter((entry) => entry !== played);
       }
-      operations.push({ id, phase: "queued", ...(threadId === undefined ? {} : { threadId }) });
+      operations.push({
+        id,
+        phase: "queued",
+        ...(threadId === undefined ? {} : { threadId }),
+        ...(providerCallId !== undefined && isKey(providerCallId) ? { providerCallId } : {}),
+      });
       save();
       return true;
     },
@@ -111,6 +118,10 @@ export function openRealtimeConversationRecord(
       operations = operations.filter((operation) => operation !== entry);
       save();
     },
+    wasPlayed: (id: string, resultId: string) =>
+      operations.some(
+        (entry) => entry.id === id && entry.resultId === resultId && entry.phase === "played",
+      ),
     result(id: string, resultId: string, phase: typeof Phase.Type) {
       if (!isResultId(resultId)) return;
       const index = operations.findIndex((entry) => entry.id === id);

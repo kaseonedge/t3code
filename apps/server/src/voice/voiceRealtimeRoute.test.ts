@@ -147,10 +147,19 @@ it.live(
                 await finish.promise;
                 return { timedOut: false, run: { id: runId, status: "completed" } } as never;
               }),
+            getThreadRecords: (_, __, filter) =>
+              Effect.sync(
+                () =>
+                  ({
+                    messages: (filter?.messageIds ?? [])
+                      .filter((id) => recorded.has(id))
+                      .map((id) => ({ id })),
+                  }) as never,
+              ),
             dispatch: (command) =>
               Effect.sync(() => {
                 if (command.type === "voice.transcript.record") {
-                  recorded.set(command.commandId, {
+                  recorded.set(command.messageId, {
                     threadId: command.threadId,
                     text: command.text,
                   });

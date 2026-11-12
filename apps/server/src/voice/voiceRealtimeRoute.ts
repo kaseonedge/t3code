@@ -23,7 +23,6 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { mintElevenRealtimeSecret } from "./ElevenRealtimeSecret.ts";
-import { spokenForm } from "./spokenForm.ts";
 import { bindRealtimeVoiceWork, realtimeVoiceText } from "./VoiceRealtimeWork.ts";
 import { bindVoiceThreadWork } from "./VoiceThreadWork.ts";
 
@@ -39,7 +38,7 @@ export const voiceRealtimeRouteLayer = Layer.unwrap(
     const settings = yield* ServerSettings.ServerSettingsService;
     const resolver = yield* SecretResolver.SecretResolver;
     const threads = yield* ThreadManagement.ThreadManagementService;
-    const realtime = bindRealtimeVoiceWork(threads);
+    const realtime = bindRealtimeVoiceWork(threads, yield* Scope.Scope);
     const http = yield* HttpClient.HttpClient;
     const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
     return HttpRouter.add(
@@ -158,6 +157,7 @@ export const voiceRealtimeRouteLayer = Layer.unwrap(
                 }
                 const { operationId } = command;
                 const primary = binding.target.threadId;
+                const crossThread = binding.crossThread;
                 if (command.type === "transcript") {
                   if (!selectedChats.has(command.threadId) && !binding.crossThread) {
                     yield* fail(operationId);
@@ -200,9 +200,7 @@ export const voiceRealtimeRouteLayer = Layer.unwrap(
                   command.type === "submit" ? (command.originThreadId ?? primary) : primary;
                 if (
                   !selectedChats.has(originThreadId) ||
-                  (threadId !== originThreadId &&
-                    !binding.crossThread &&
-                    !(command.type === "recover" && selectedChats.has(threadId)))
+                  (threadId !== originThreadId && !binding.crossThread && command.type === "submit")
                 ) {
                   yield* fail(operationId, command.type === "submit");
                   continue;
@@ -263,6 +261,8 @@ export const voiceRealtimeRouteLayer = Layer.unwrap(
                   }
                   const operation = yield* work.recover(operationId);
                   if (operation === null) return "not-found" as const;
+                  if (!crossThread && threadId !== primary && operation.senderThreadId !== threadId)
+                    return "not-found" as const;
                   if (operation.runId === null) return null;
                   const status = yield* work.status(operation.runId);
                   return status === null
@@ -290,6 +290,16 @@ export const voiceRealtimeRouteLayer = Layer.unwrap(
                   });
                   continue;
                 }
+                const completion = operations.has(operation)
+                  ? undefined
+                  : yield* realtime.watch({
+                      target,
+                      runId: receipt.runId,
+                      origin: receipt.senderThreadId ?? target.threadId,
+                      taskText: receipt.taskText ?? "",
+                      title,
+                      link,
+                    });
                 yield* send({
                   type: "receipt",
                   operationId,
@@ -298,63 +308,18 @@ export const voiceRealtimeRouteLayer = Layer.unwrap(
                   threadId,
                   link,
                 });
-                if (operations.has(operation)) continue;
+                if (completion === undefined) continue;
                 operations.add(operation);
-                yield* Effect.gen(function* () {
-                  const result = yield* threads.waitForThread({
-                    ...target,
-                    runId: receipt.runId,
-                    untilDelegatedWorkSettled: true,
-                    timeoutMs: 300_000,
-                  });
-                  if (result.timedOut || result.run === null) return;
-                  const run = result.resultRun ?? result.run;
-                  const { messages } = yield* threads.getProjectThreadRecords(
-                    target,
-                    ["messages"],
-                    { messageRunIds: [run.id], messageRoles: ["assistant"] },
-                  );
-                  const text = spokenForm(
-                    realtimeVoiceText(
-                      messages.filter((message) => !message.streaming).at(-1)?.text ?? "",
-                      4000,
-                    ),
-                  )
-                    .join(" ")
-                    .slice(0, 1200);
-                  const taskLabel = spokenForm(realtimeVoiceText(receipt.taskText ?? "", 4000))
-                    .join(" ")
-                    .slice(0, 160);
-                  const resultId = `voice-result:${run.id}`;
-                  const origin = receipt.senderThreadId ?? target.threadId;
-                  yield* realtime
-                    .record(
-                      origin,
-                      resultId,
-                      "assistant",
-                      `T3 task “${taskLabel}” in ${link} ${run.status}. ${text}`,
-                    )
-                    .pipe(Effect.ignore);
-                  yield* send({
-                    type: "result",
-                    operationId,
-                    resultId,
-                    sourceRunId: receipt.runId,
-                    conversationThreadId: origin,
-                    threadId: target.threadId,
-                    threadTitle: title,
-                    taskLabel,
-                    status: run.status,
-                    text,
-                    link,
-                  });
-                }).pipe(
-                  Effect.catch(() =>
-                    send({
-                      type: "error",
-                      operationId,
-                      message: "T3 could not read that task's result.",
-                    }),
+                yield* completion.pipe(
+                  Effect.flatMap((result) =>
+                    result
+                      ? send({ ...result, operationId })
+                      : send({
+                          type: "error",
+                          operationId,
+                          message:
+                            "T3 could not deliver that task's result. Reconnect to try again.",
+                        }),
                   ),
                   Effect.forkIn(scope),
                 );

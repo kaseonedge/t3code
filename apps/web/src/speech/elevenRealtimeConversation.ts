@@ -119,7 +119,11 @@ export function openElevenRealtimeConversation(input: {
   };
   const recover = (operationId: string) => {
     const threadId = input.record.target(operationId);
-    sendControl({ type: "recover", operationId, ...(threadId === undefined ? {} : { threadId }) });
+    sendControl({
+      type: "recover",
+      operationId,
+      ...(threadId === undefined || threadId === input.threadId ? {} : { threadId }),
+    });
   };
   const saveTranscript = (
     item: string,
@@ -152,16 +156,18 @@ export function openElevenRealtimeConversation(input: {
       return;
     const transcript = transcripts.get(speech.item);
     if (transcript === undefined) return;
-    saveTranscript(
-      speech.item,
-      "assistant",
-      transcript,
-      responseTargets.get(speech.responseId) ?? targetThreadId,
-    );
     const result = generated.get(speech.responseId);
     if (result) {
+      input.record.transcript(speech.item, "assistant", transcript);
       input.record.result(result.operationId, result.resultId, "played");
       generated.delete(speech.responseId);
+    } else {
+      saveTranscript(
+        speech.item,
+        "assistant",
+        transcript,
+        responseTargets.get(speech.responseId) ?? targetThreadId,
+      );
     }
     speech = undefined;
     update({ speaking: null });
@@ -414,7 +420,12 @@ export function openElevenRealtimeConversation(input: {
         }
         return;
       case "response.function_call_arguments.done": {
-        if (!event.call_id || seenCalls.has(event.call_id)) return;
+        if (
+          !event.call_id ||
+          seenCalls.has(event.call_id) ||
+          (event.response_id !== undefined && event.response_id !== activeResponseId)
+        )
+          return;
         seenCalls.add(event.call_id);
         if (activeResponseId) toolResponses.add(activeResponseId);
         if (event.name === "work_status") {
@@ -447,6 +458,7 @@ export function openElevenRealtimeConversation(input: {
           }
           return;
         }
+        if (event.name === "queue_work" && input.record.hasCall(event.call_id)) return;
         const task = decodeTask(event.arguments);
         if (!heardUser || event.name !== "queue_work" || task._tag !== "Some") {
           toolOutput(event.call_id, { error: "Work needs a spoken request." });
@@ -458,7 +470,7 @@ export function openElevenRealtimeConversation(input: {
         const originThreadId = utteranceTarget ?? targetThreadId;
         const threadId =
           task.value.threadId ?? (originThreadId === input.threadId ? undefined : originThreadId);
-        if (!input.record.remember(operationId, threadId)) {
+        if (!input.record.remember(operationId, threadId ?? originThreadId, event.call_id)) {
           toolOutput(event.call_id, {
             error: "The conversation already has 24 outstanding tasks.",
           });
@@ -543,7 +555,8 @@ export function openElevenRealtimeConversation(input: {
       if (
         receiptRuns.get(event.operationId)?.threadId !== event.threadId ||
         receiptRuns.get(event.operationId)?.runId !== event.sourceRunId ||
-        announced.has(event.resultId)
+        announced.has(event.resultId) ||
+        input.record.wasPlayed(event.operationId, event.resultId)
       )
         return;
       input.record.result(event.operationId, event.resultId, "queued");
