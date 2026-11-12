@@ -13,6 +13,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   RuntimeRequestId,
   ThreadId,
   VOICE_WATCH_LIMIT,
@@ -176,7 +177,13 @@ const request = Effect.fn("test.voiceWatch.request")(function* (
     nativeRequestRef: null,
     kind,
     status,
-    responseCapability: { type: "message" as const },
+    responseCapability:
+      kind === "user_input"
+        ? { type: "message" as const }
+        : {
+            type: "live" as const,
+            providerSessionId: ProviderSessionId.make("session:voice-watch"),
+          },
     createdAt: occurredAt,
     resolvedAt: null,
   };
@@ -369,6 +376,7 @@ it.effect("a thread waiting on the user is reported as that, apart from a finish
       `Thread ${other} (Deploy) is waiting for an approval from the user`,
     );
     assert.notInclude(notice!.text, "t3_pending_request");
+    assert.include(notice!.text, "open the link and review the request there");
     // Hearing about it is not leave to settle it.
     assert.include(notice!.text, "Do not reply to that thread, approve, deny, answer or act on it");
     assert.deepEqual(notice!.notification, {
@@ -379,6 +387,10 @@ it.effect("a thread waiting on the user is reported as that, apart from a finish
 
     // The voice thread is busy with that notice, so a second thread's question waits its turn.
     yield* watch.handle(yield* request(other, "pending", "user_input"));
+    const question = (yield* routerNotices).find((message) => message.id.endsWith(":user_input"));
+    assert.include(question?.text, "Work can continue while the request is open.");
+    assert.include(question?.text, "t3_pending_request action read");
+    assert.equal(question?.notification?.summary, 'Thread "Deploy" requested an answer');
     const queued = () =>
       Effect.map(projections.getThreadProjection(router), (projection) =>
         projection.runs.filter((run) => run.status === "queued"),

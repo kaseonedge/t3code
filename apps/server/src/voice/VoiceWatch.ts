@@ -332,6 +332,10 @@ const make = Effect.gen(function* () {
     const router = yield* audience(thread);
     if (router === undefined) return;
     const { title, link } = describe(thread);
+    const nonblocking = request.responseCapability.type === "message";
+    const situation = nonblocking
+      ? `has requested ${need} from the user. Work can continue while the request is open.`
+      : `is waiting for ${need} from the user.`;
     const details =
       request.kind === "user_input"
         ? `Read what it asks with t3_pending_request action read, threadId ${event.threadId}, requestId ${request.id}.\n\nTell the user, unasked: what it is asking, in a sentence, and give them the link.`
@@ -339,8 +343,11 @@ const make = Effect.gen(function* () {
     yield* tell(
       router,
       key,
-      `Thread ${event.threadId} (${title}) is waiting for ${need} from the user: ${link}\n${details} ${REPORT_ONLY}`,
-      { outcome: "updated", summary: `Thread "${title}" needs ${need}` },
+      `Thread ${event.threadId} (${title}) ${situation} ${link}\n${details} ${REPORT_ONLY}`,
+      {
+        outcome: "updated",
+        summary: `Thread "${title}" ${nonblocking ? "requested" : "needs"} ${need}`,
+      },
     );
   });
 
