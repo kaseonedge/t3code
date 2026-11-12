@@ -61,6 +61,7 @@ export function bindVoiceThreadWork(
         runId: receipt.run.id,
         status: receipt.run.status,
         delivery: receipt.delivery,
+        taskText: receipt.message.text,
       };
     }),
     recover: Effect.fn("VoiceThreadWork.recover")(function* (operationId: string) {
@@ -69,7 +70,8 @@ export function bindVoiceThreadWork(
         ["messages"],
         { messageIds: [operationMessageId(operationId)] },
       );
-      return messages[0]?.runId ?? null;
+      const message = messages[0];
+      return message?.runId ? { runId: message.runId, taskText: message.text } : null;
     }),
     status: Effect.fn("VoiceThreadWork.status")(function* (runId: RunId) {
       const { runs } = yield* threads.getProjectThreadRecords({ projectId, threadId }, ["runs"], {

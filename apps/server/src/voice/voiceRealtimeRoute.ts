@@ -87,7 +87,12 @@ export const voiceRealtimeRouteLayer = Layer.unwrap(
               const target = { projectId: shell.projectId, threadId };
               const link = formatThreadLink({ environmentId, threadId }, shell.title);
               yield* send({ type: "ready", value, threadId });
-              return { work: bindVoiceThreadWork(threads, target), target, link };
+              return {
+                work: bindVoiceThreadWork(threads, target),
+                target,
+                link,
+                title: shell.title,
+              };
             });
             let binding: Effect.Success<ReturnType<typeof start>> | undefined;
             const operations = new Set<string>();
@@ -101,7 +106,7 @@ export const voiceRealtimeRouteLayer = Layer.unwrap(
                 }
                 if (command.type === "start") return yield* unavailable;
                 const { operationId } = command;
-                const { work, target, link } = binding;
+                const { work, target, link, title } = binding;
                 if (operations.size >= MAX_OPERATIONS && !operations.has(operationId)) {
                   yield* send({
                     type: "error",
@@ -112,11 +117,16 @@ export const voiceRealtimeRouteLayer = Layer.unwrap(
                 }
                 const receipt = yield* Effect.gen(function* () {
                   if (command.type === "submit") {
-                    const { runId, status } = yield* work.submit(operationId, command.text);
-                    return { runId, status };
+                    const { runId, status, taskText } = yield* work.submit(
+                      operationId,
+                      command.text,
+                    );
+                    return { runId, status, taskText };
                   }
-                  const runId = yield* work.recover(operationId);
-                  return runId === null ? null : yield* work.status(runId);
+                  const operation = yield* work.recover(operationId);
+                  if (operation === null) return null;
+                  const status = yield* work.status(operation.runId);
+                  return status === null ? null : { ...status, taskText: operation.taskText };
                 }).pipe(Effect.orElseSucceed(() => null));
                 if (receipt === null) {
                   yield* send({
@@ -126,7 +136,13 @@ export const voiceRealtimeRouteLayer = Layer.unwrap(
                   });
                   continue;
                 }
-                yield* send({ type: "receipt", operationId, ...receipt, link });
+                yield* send({
+                  type: "receipt",
+                  operationId,
+                  runId: receipt.runId,
+                  status: receipt.status,
+                  link,
+                });
                 if (operations.has(operationId)) continue;
                 operations.add(operationId);
                 yield* Effect.gen(function* () {
@@ -149,6 +165,12 @@ export const voiceRealtimeRouteLayer = Layer.unwrap(
                     type: "result",
                     operationId,
                     resultId: `voice-result:${run.id}`,
+                    sourceRunId: receipt.runId,
+                    threadId: target.threadId,
+                    threadTitle: title,
+                    taskLabel: spokenForm(receipt.taskText ?? "")
+                      .join(" ")
+                      .slice(0, 160),
                     status: run.status,
                     text,
                     link,

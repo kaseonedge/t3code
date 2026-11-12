@@ -102,6 +102,10 @@ it("returns a work receipt before completion and delivers a late result as fresh
     ...receipt,
     type: "result",
     resultId: "result-1",
+    sourceRunId: "run:1",
+    threadId,
+    threadTitle: "Build thread",
+    taskLabel: "Check the build",
     text: "Build passed",
     status: "completed",
   };
@@ -184,16 +188,34 @@ it("recovers after context acceptance and generation, then records only drained 
     type: "result",
     operationId: "previous",
     resultId: "voice-result:run-1",
+    sourceRunId: "run-1",
+    threadId: first.threadId,
+    threadTitle: "Build thread",
+    taskLabel: "Check the build",
     text: "Build passed",
     status: "completed",
     link: "t3-thread://v2/env/thread",
   };
+  first.control.receive({
+    type: "receipt",
+    operationId: result.operationId,
+    runId: result.sourceRunId,
+    status: result.status,
+    link: result.link,
+  });
   first.control.receive(result);
   first.provider.receive({ type: "conversation.item.added", item: { id: "item_work-1" } });
   first.conversation.stop();
 
   const second = setup(first.storage);
   expect(second.control.sent).toContainEqual({ type: "recover", operationId: "previous" });
+  second.control.receive({
+    type: "receipt",
+    operationId: result.operationId,
+    runId: result.sourceRunId,
+    status: result.status,
+    link: result.link,
+  });
   second.control.receive(result);
   second.provider.receive({
     type: "response.created",
@@ -218,6 +240,13 @@ it("recovers after context acceptance and generation, then records only drained 
 
   const third = setup(first.storage);
   expect(third.control.sent).toContainEqual({ type: "recover", operationId: "previous" });
+  third.control.receive({
+    type: "receipt",
+    operationId: result.operationId,
+    runId: result.sourceRunId,
+    status: result.status,
+    link: result.link,
+  });
   third.control.receive(result);
   third.provider.receive({
     type: "response.created",
@@ -272,4 +301,165 @@ it("uses committed audio once and replays sanitized history after tab close", ()
   expect(JSON.stringify(second.provider.sent)).not.toContain("fixture");
   second.provider.receive(tool);
   expect(second.control.sent).not.toContainEqual(expect.objectContaining({ type: "submit" }));
+});
+
+it("acknowledges work, keeps talking, and attributes an older result after reconnect", () => {
+  const first = setup();
+  const link = "t3-thread://v2/working/thread:voice";
+  const say = (id: string) => {
+    first.provider.receive({ type: "input_audio_buffer.speech_started", item_id: id });
+    first.provider.receive({ type: "input_audio_buffer.committed", item_id: id });
+    first.provider.receive({ type: "response.created", response: { id } });
+  };
+  const queue = (id: string, text: string) =>
+    first.provider.receive({
+      type: "response.function_call_arguments.done",
+      name: "queue_work",
+      call_id: id,
+      arguments: JSON.stringify({ text }),
+    });
+  const receipt = (operationId: string, runId: string) => ({
+    type: "receipt",
+    operationId,
+    runId,
+    status: "queued",
+    link,
+  });
+
+  say("build-request");
+  queue("build-call", "Check the build");
+  first.control.receive(receipt("work-1", "run-build"));
+  expect(first.provider.sent).toContainEqual(
+    expect.objectContaining({
+      type: "conversation.item.create",
+      item: expect.objectContaining({
+        type: "function_call_output",
+        call_id: "build-call",
+        output: JSON.stringify({
+          operationId: "work-1",
+          status: "queued",
+          runId: "run-build",
+          link,
+        }),
+      }),
+    }),
+  );
+  first.provider.receive({
+    type: "response.done",
+    response: { id: "build-request", status: "completed" },
+  });
+  expect(first.record.pending()).toContain("work-1");
+
+  first.provider.receive({ type: "response.created", response: { id: "ack" } });
+  first.provider.receive({
+    type: "response.output_audio.delta",
+    response_id: "ack",
+    item_id: "ack-audio",
+    delta: "AQI=",
+  });
+  first.provider.receive({
+    type: "response.output_audio_transcript.done",
+    item_id: "ack-audio",
+    transcript: "I queued the build check.",
+  });
+  first.playback.isDrained.mockReturnValue(true);
+  first.provider.receive({ type: "response.done", response: { id: "ack", status: "completed" } });
+  expect(first.playback.enqueue).toHaveBeenCalledWith(1, new Uint8Array([1, 2]));
+  expect(first.record.context()).toContainEqual({
+    speaker: "assistant",
+    text: "I queued the build check.",
+  });
+
+  say("ordinary-question");
+  first.provider.receive({
+    type: "response.output_audio.delta",
+    response_id: "ordinary-question",
+    item_id: "ordinary-audio",
+    delta: "AwQ=",
+  });
+  first.provider.receive({
+    type: "response.output_audio_transcript.done",
+    item_id: "ordinary-audio",
+    transcript: "We can keep talking.",
+  });
+  first.playback.isDrained.mockReturnValue(true);
+  first.provider.receive({
+    type: "response.done",
+    response: { id: "ordinary-question", status: "completed" },
+  });
+  expect(first.playback.enqueue).toHaveBeenCalledWith(2, new Uint8Array([3, 4]));
+  expect(first.record.context()).toContainEqual({
+    speaker: "assistant",
+    text: "We can keep talking.",
+  });
+  expect(
+    first.control.sent.filter((command) => (command as { type: string }).type === "submit"),
+  ).toHaveLength(1);
+
+  say("lint-request");
+  queue("lint-call", "Check lint");
+  first.control.receive(receipt("work-2", "run-lint"));
+  first.conversation.stop();
+
+  const next = setup(first.storage);
+  expect(next.control.sent).toEqual(
+    expect.arrayContaining([
+      { type: "recover", operationId: "work-1" },
+      { type: "recover", operationId: "work-2" },
+    ]),
+  );
+  next.control.receive(receipt("work-2", "run-lint"));
+  next.control.receive(receipt("work-1", "run-build"));
+  next.control.receive(receipt("work-1", "run-lint"));
+  const completion = {
+    type: "result",
+    operationId: "work-1",
+    sourceRunId: "run-build",
+    threadId: next.threadId,
+    threadTitle: "Build and lint",
+    taskLabel: "Check the build",
+    resultId: "voice-result:run-build",
+    status: "completed",
+    text: "The build passed",
+    link,
+  };
+  const beforeResult = next.provider.sent.length;
+  next.control.receive({ ...completion, operationId: "work-2" });
+  next.control.receive({ ...completion, threadId: ThreadId.make("wrong-thread") });
+  expect(next.provider.sent).toHaveLength(beforeResult);
+
+  next.control.receive(completion);
+  expect(JSON.stringify(next.provider.sent.slice(beforeResult))).toContain("Check the build");
+  expect(JSON.stringify(next.provider.sent.slice(beforeResult))).toContain("Build and lint");
+  expect(JSON.stringify(next.provider.sent.slice(beforeResult))).toContain(link);
+  expect(JSON.stringify(next.provider.sent.slice(beforeResult))).not.toContain("run-lint");
+  next.provider.receive({
+    type: "response.created",
+    response: { id: "build-result", metadata: { t3ResultId: completion.resultId } },
+  });
+  next.provider.receive({
+    type: "response.output_audio.delta",
+    response_id: "build-result",
+    item_id: "result-audio",
+    delta: "BQY=",
+  });
+  next.provider.receive({
+    type: "response.output_audio_transcript.done",
+    item_id: "result-audio",
+    transcript: "The build check in Build and lint passed.",
+  });
+  next.provider.receive({
+    type: "response.done",
+    response: { id: "build-result", status: "completed" },
+  });
+  expect(next.playback.enqueue).toHaveBeenCalledWith(1, new Uint8Array([5, 6]));
+  expect(next.record.pending()).toEqual(expect.arrayContaining(["work-1", "work-2"]));
+  next.playback.isDrained.mockReturnValue(true);
+  next.conversation.feed(new Float32Array());
+  expect(next.record.pending()).not.toContain("work-1");
+  expect(next.record.pending()).toContain("work-2");
+  expect(next.record.context()).toContainEqual({
+    speaker: "assistant",
+    text: "The build check in Build and lint passed.",
+  });
 });
