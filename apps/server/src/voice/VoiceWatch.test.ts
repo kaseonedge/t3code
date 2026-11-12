@@ -25,6 +25,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
@@ -419,6 +420,7 @@ it.effect("replays stored events and withdraws a queued request from the old voi
     yield* createThread(router, "Voice");
     yield* createThread(replacement, "New voice");
     yield* createThread(other, "Deploy");
+    yield* createThread(watched, "Other work");
 
     yield* finishedRun(router, "running");
     const pending = yield* request(other, "pending");
@@ -437,7 +439,11 @@ it.effect("replays stored events and withdraws a queued request from the old voi
     `;
     yield* settings.updateSettings({ voiceRouterThreadId: replacement });
     yield* events.write({ events: [yield* request(other, "resolved")] });
-    yield* events.write({ events: [yield* finishedRun(other, "completed")] });
+    const completed = yield* finishedRun(other, "completed");
+    const ignored = yield* finishedRun(watched, "running");
+    yield* events.write({
+      events: [completed, ignored],
+    });
 
     const highWater = yield* events.latestSequence();
     yield* watch.start();
@@ -457,6 +463,13 @@ it.effect("replays stored events and withdraws a queued request from the old voi
     );
     assert.deepEqual(extra, []);
     assert.equal(notice?.notification?.outcome, "completed");
+
+    yield* TestClock.adjust(0);
+    const [cursor] = yield* sql<{ readonly last_sequence: number }>`
+      SELECT last_sequence FROM orchestration_v2_projection_metadata
+      WHERE projection_name = 'voice-watch'
+    `;
+    assert.isAtLeast(cursor!.last_sequence, highWater);
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 

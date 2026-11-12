@@ -381,6 +381,25 @@ const make = Effect.gen(function* () {
     `;
   });
 
+  const canReport = (event: OrchestrationV2DomainEvent): boolean => {
+    switch (event.type) {
+      case "run.updated":
+        return (
+          OUTCOMES[event.payload.status] !== undefined &&
+          !event.payload.userMessageId?.startsWith(NOTICE_MESSAGE_PREFIX)
+        );
+      case "subagent.updated":
+        return (
+          OUTCOMES[event.payload.status] !== undefined &&
+          (event.payload.origin === "provider_native" || event.payload.result !== null)
+        );
+      case "runtime-request.updated":
+        return NEEDS[event.payload.kind] !== undefined;
+      default:
+        return false;
+    }
+  };
+
   const start: VoiceWatch["Service"]["start"] = () =>
     forkParked(
       Effect.gen(function* () {
@@ -390,29 +409,17 @@ const make = Effect.gen(function* () {
         `;
         const afterSequence = cursor?.last_sequence ?? (yield* events.latestSequence());
         if (cursor === undefined) yield* saveCursor(afterSequence);
-        yield* events.stream({ afterSequence }).pipe(
-          Stream.filter(({ event }) => {
-            switch (event.type) {
-              case "run.updated":
-                return (
-                  OUTCOMES[event.payload.status] !== undefined &&
-                  !event.payload.userMessageId?.startsWith(NOTICE_MESSAGE_PREFIX)
-                );
-              case "subagent.updated":
-                return (
-                  OUTCOMES[event.payload.status] !== undefined &&
-                  (event.payload.origin === "provider_native" || event.payload.result !== null)
-                );
-              case "runtime-request.updated":
-                return NEEDS[event.payload.kind] !== undefined;
-              default:
-                return false;
-            }
-          }),
-          Stream.runForEach(({ event, sequence }) =>
-            handle(event).pipe(Effect.andThen(saveCursor(sequence))),
-          ),
-        );
+        yield* events
+          .stream({ afterSequence })
+          .pipe(
+            Stream.runForEachArray((batch) =>
+              Effect.forEach(
+                batch,
+                ({ event }) => (canReport(event) ? handle(event) : Effect.void),
+                { discard: true },
+              ).pipe(Effect.andThen(saveCursor(batch[batch.length - 1]!.sequence))),
+            ),
+          );
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("voice watch event stream failed", { cause }),
