@@ -124,10 +124,20 @@ export const voiceRealtimeRouteLayer = Layer.unwrap(
                     return { runId, status, taskText };
                   }
                   const operation = yield* work.recover(operationId);
-                  if (operation === null) return null;
+                  if (operation === null) return "not-found" as const;
+                  if (operation.runId === null) return null;
                   const status = yield* work.status(operation.runId);
                   return status === null ? null : { ...status, taskText: operation.taskText };
                 }).pipe(Effect.orElseSucceed(() => null));
+                if (receipt === "not-found") {
+                  yield* send({
+                    type: "error",
+                    operationId,
+                    reason: "operation-not-found",
+                    message: "That task was not queued.",
+                  });
+                  continue;
+                }
                 if (receipt === null) {
                   yield* send({
                     type: "error",

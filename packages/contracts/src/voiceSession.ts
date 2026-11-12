@@ -342,6 +342,7 @@ export const VoiceRealtimeEvent = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("error"),
     operationId: Schema.optional(VoiceOperationId),
+    reason: Schema.optional(Schema.Literal("operation-not-found")),
     message: Schema.String,
   }),
 ]);

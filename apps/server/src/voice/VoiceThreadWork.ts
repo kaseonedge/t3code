@@ -71,7 +71,7 @@ export function bindVoiceThreadWork(
         { messageIds: [operationMessageId(operationId)] },
       );
       const message = messages[0];
-      return message?.runId ? { runId: message.runId, taskText: message.text } : null;
+      return message === undefined ? null : { runId: message.runId, taskText: message.text };
     }),
     status: Effect.fn("VoiceThreadWork.status")(function* (runId: RunId) {
       const { runs } = yield* threads.getProjectThreadRecords({ projectId, threadId }, ["runs"], {

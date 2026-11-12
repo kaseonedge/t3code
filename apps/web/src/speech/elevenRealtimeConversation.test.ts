@@ -463,3 +463,32 @@ it("acknowledges work, keeps talking, and attributes an older result after recon
     text: "The build check in Build and lint passed.",
   });
 });
+
+it("frees an unsubmitted operation only after T3 confirms it is missing", () => {
+  const first = setup();
+  first.provider.receive({ type: "input_audio_buffer.committed", item_id: "spoken" });
+  first.provider.receive({
+    type: "response.function_call_arguments.done",
+    name: "queue_work",
+    call_id: "lost-send",
+    arguments: '{"text":"Check the build"}',
+  });
+  first.conversation.stop();
+
+  const next = setup(first.storage);
+  expect(next.control.sent).toContainEqual({ type: "recover", operationId: "work-1" });
+  next.control.receive({
+    type: "error",
+    operationId: "work-1",
+    message: "T3 could not read that task.",
+  });
+  expect(next.record.pending()).toContain("work-1");
+  next.control.receive({
+    type: "error",
+    operationId: "work-1",
+    reason: "operation-not-found",
+    message: "That task was not queued.",
+  });
+  expect(next.record.pending()).not.toContain("work-1");
+  expect(next.record.pending()).toContain("previous");
+});

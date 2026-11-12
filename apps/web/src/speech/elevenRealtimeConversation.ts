@@ -382,6 +382,14 @@ export function openElevenRealtimeConversation(input: {
       flushResults();
       return;
     }
+    if (
+      event.type === "error" &&
+      event.reason === "operation-not-found" &&
+      event.operationId !== undefined &&
+      !receiptRuns.has(event.operationId)
+    ) {
+      input.record.forgetUnsubmitted(event.operationId);
+    }
     const call = [...calls].find(([, pending]) => pending.operationId === event.operationId);
     if (!call) return;
     const [callId, { operationId, epoch }] = call;

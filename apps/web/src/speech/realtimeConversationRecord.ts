@@ -81,6 +81,12 @@ export function openRealtimeConversationRecord(
       save();
       return true;
     },
+    forgetUnsubmitted(id: string) {
+      const entry = operations.find((operation) => operation.id === id);
+      if (!entry || entry.phase !== "queued" || entry.resultId !== undefined) return;
+      operations = operations.filter((operation) => operation !== entry);
+      save();
+    },
     result(id: string, resultId: string, phase: typeof Phase.Type) {
       if (!isKey(resultId)) return;
       const index = operations.findIndex((entry) => entry.id === id);
