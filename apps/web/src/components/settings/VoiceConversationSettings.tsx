@@ -220,7 +220,7 @@ function EnvironmentVoiceConversation({
       />
       <SettingsRow
         title="Voice thread"
-        description="The one thread that hears you and answers aloud. It hands longer work to other threads and tells you when they finish."
+        description="The standard voice conversation answers here. Realtime uses the chat you start it in."
         control={
           <Select
             value={voiceThreadId ?? NO_THREAD}

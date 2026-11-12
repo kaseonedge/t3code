@@ -660,6 +660,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "delegated_task.completion-delivery.dispose":
     case "thread.created.record":
       return command.parentThreadId;
+    case "voice.transcript.record":
     case "secret_request.record":
     case "link_request.record":
       return command.threadId;
@@ -14114,6 +14115,82 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.created.record":
         yield* dispatchCreatedThreadRecord(command, events);
         break;
+      case "voice.transcript.record": {
+        const projection = yield* projectionStore
+          .getThreadRecords(command.threadId, [])
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          );
+        const { thread } = projection;
+        if (
+          thread.archivedAt !== null ||
+          thread.deletedAt !== null ||
+          isProviderNativeSubagentThread(thread)
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "This thread cannot record voice transcripts.",
+          });
+        }
+        const now = yield* DateTime.now;
+        const emitEvent = emit(events, command);
+        const message = {
+          id: command.messageId,
+          threadId: command.threadId,
+          runId: null,
+          nodeId: null,
+          role: command.role,
+          text: command.text,
+          createdBy: command.role === "user" ? ("user" as const) : ("agent" as const),
+          creationSource: "server" as const,
+          streaming: false,
+          attachments: [],
+          createdAt: now,
+          updatedAt: now,
+        };
+        yield* emitEvent({
+          type: "message.updated",
+          threadId: command.threadId,
+          occurredAt: now,
+          payload: message,
+        });
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`turn-item:${command.messageId}`),
+            messageId: message.id,
+            threadId: command.threadId,
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: yield* nextTurnItemOrdinal(projection),
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            text: message.text,
+            ...(message.role === "user"
+              ? {
+                  type: "user_message",
+                  inputIntent: "turn_start",
+                  createdBy: "user",
+                  creationSource: "server",
+                  attachments: [],
+                }
+              : { type: "assistant_message", streaming: false }),
+          },
+        });
+        break;
+      }
       case "secret_request.record":
         yield* dispatchSecretRequestRecord(command, events);
         break;

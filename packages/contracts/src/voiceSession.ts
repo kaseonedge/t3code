@@ -105,6 +105,7 @@ export const VoiceSessionErrorReason = Schema.Literals([
   "not-configured",
   "unreadable-key",
   "rejected-key",
+  "realtime-configuration-rejected",
   "rate-limit",
   "zero-retention-unavailable",
   "no-router",
@@ -126,6 +127,8 @@ export class VoiceSessionError extends Schema.TaggedError<VoiceSessionError>()(
         return "Couldn’t read the ElevenLabs API key. Unlock the vault on this environment or update the key in Settings → Voice. No audio was sent to ElevenLabs.";
       case "rejected-key":
         return "ElevenLabs rejected this API key. Check its permissions and billing in Settings → Voice.";
+      case "realtime-configuration-rejected":
+        return "ElevenLabs rejected the Realtime configuration. Check the selected voice and this workspace’s Realtime access.";
       case "rate-limit":
         return "ElevenLabs reached a usage limit. Check the account's quota or try again later.";
       case "zero-retention-unavailable":
@@ -307,21 +310,57 @@ export const VOICE_REALTIME_MAX_COMMAND_BYTES = 32_768;
 
 const VoiceOperationId = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{1,128}$/));
 export const VoiceRealtimeCommand = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("start"), threadId: ThreadId }),
+  Schema.Struct({
+    type: Schema.Literal("start"),
+    threadId: ThreadId,
+    crossThread: Schema.optional(Schema.Boolean),
+  }),
+  Schema.Struct({ type: Schema.Literal("select"), threadId: ThreadId }),
+  Schema.Struct({
+    type: Schema.Literal("transcript"),
+    operationId: VoiceOperationId,
+    threadId: ThreadId,
+    role: Schema.Literals(["user", "assistant"]),
+    text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4000)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("discover"),
+    operationId: VoiceOperationId,
+    query: Schema.optional(Schema.String.check(Schema.isMaxLength(160))),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("read"),
+    operationId: VoiceOperationId,
+    threadId: ThreadId,
+  }),
   Schema.Struct({
     type: Schema.Literal("submit"),
     operationId: VoiceOperationId,
+    threadId: Schema.optional(ThreadId),
+    originThreadId: Schema.optional(ThreadId),
     text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4000)),
   }),
-  Schema.Struct({ type: Schema.Literal("recover"), operationId: VoiceOperationId }),
+  Schema.Struct({
+    type: Schema.Literal("recover"),
+    operationId: VoiceOperationId,
+    threadId: Schema.optional(ThreadId),
+  }),
   Schema.Struct({ type: Schema.Literal("stop") }),
 ]);
 export type VoiceRealtimeCommand = typeof VoiceRealtimeCommand.Type;
 
 export const VoiceRealtimeEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("ready"), value: Schema.String, threadId: ThreadId }),
+  Schema.Struct({ type: Schema.Literal("target"), threadId: ThreadId, title: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("transcript-saved"), operationId: VoiceOperationId }),
+  Schema.Struct({
+    type: Schema.Literal("tool-output"),
+    operationId: VoiceOperationId,
+    text: Schema.String,
+  }),
   Schema.Struct({
     type: Schema.Literal("receipt"),
+    threadId: Schema.optional(ThreadId),
     operationId: VoiceOperationId,
     runId: Schema.String,
     status: Schema.String,
@@ -332,6 +371,7 @@ export const VoiceRealtimeEvent = Schema.Union([
     operationId: VoiceOperationId,
     resultId: Schema.String,
     sourceRunId: Schema.String,
+    conversationThreadId: Schema.optional(ThreadId),
     threadId: ThreadId,
     threadTitle: Schema.String,
     taskLabel: Schema.String,
@@ -342,7 +382,7 @@ export const VoiceRealtimeEvent = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("error"),
     operationId: Schema.optional(VoiceOperationId),
-    reason: Schema.optional(Schema.Literal("operation-not-found")),
+    reason: Schema.optional(Schema.Literals(["operation-not-found", "operation-rejected"])),
     message: Schema.String,
   }),
 ]);

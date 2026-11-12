@@ -3,10 +3,11 @@ import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ThreadId } from "@t3tools/contr
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import { useClientSettings, useEnvironmentSettings } from "../../hooks/useSettings";
 import {
+  selectRealtimeVoiceThread,
   startVoiceConversation,
   stopVoiceConversation,
   useVoiceConversation,
@@ -36,6 +37,7 @@ function setup(options: {
   readonly consented?: boolean;
   readonly realtime?: boolean;
   readonly phase?: "connecting" | "live";
+  readonly activeTarget?: ThreadId;
 }) {
   revokeVoiceConversation();
   if (options.consented ?? true) grantVoiceConversation(environmentId);
@@ -51,6 +53,7 @@ function setup(options: {
   vi.mocked(usePreparedConnection).mockReturnValue(Option.some({ environmentId }) as never);
   vi.mocked(startVoiceConversation).mockResolvedValue(undefined);
   vi.mocked(stopVoiceConversation).mockReturnValue(undefined);
+  vi.mocked(selectRealtimeVoiceThread).mockReturnValue(undefined);
   vi.mocked(useVoiceConversation).mockReturnValue(
     options.phase
       ? {
@@ -58,6 +61,15 @@ function setup(options: {
           phase: options.phase,
           environmentId,
           acknowledged: false,
+          ...(options.activeTarget
+            ? {
+                realtimeTarget: {
+                  threadId: options.activeTarget,
+                  title: "Primary",
+                  crossThread: true,
+                },
+              }
+            : {}),
         }
       : null,
   );
@@ -131,4 +143,42 @@ it("opts into realtime on the selected thread while the standard button keeps it
   expect(vi.mocked(startVoiceConversation).mock.lastCall?.[0]).not.toHaveProperty(
     "realtimeThreadId",
   );
+});
+
+it("requires separate confirmation before making chats in the environment available to Realtime", async () => {
+  setup({ realtime: true });
+  const threadId = ThreadId.make("primary");
+  await using screen = await render(
+    <ComposerVoiceConversationButton environmentId={environmentId} threadId={threadId} />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Realtime across chats" }));
+  await expect.element(page.getByRole("alertdialog")).toBeVisible();
+  expect(startVoiceConversation).not.toHaveBeenCalled();
+  const confirm = page.getByRole("button", { name: "Start across chats" });
+  await expect.element(confirm).toBeVisible();
+  (confirm.element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+  expect(startVoiceConversation).toHaveBeenCalledWith(
+    expect.objectContaining({
+      realtimeThreadId: threadId,
+      realtimeCrossThread: true,
+    }),
+  );
+});
+
+it("switches the active Realtime target only when the user chooses the new chat", async () => {
+  const primary = ThreadId.make("primary");
+  const next = ThreadId.make("next");
+  setup({ realtime: true, phase: "live", activeTarget: primary });
+  await using screen = await render(
+    <ComposerVoiceConversationButton environmentId={environmentId} threadId={primary} />,
+  );
+  const select = screen.getByRole("button", { name: "Use this chat for voice" });
+  expect(select.query()).toBeNull();
+  await screen.rerender(
+    <ComposerVoiceConversationButton environmentId={environmentId} threadId={next} />,
+  );
+  expect(selectRealtimeVoiceThread).not.toHaveBeenCalled();
+  await userEvent.click(select);
+  expect(selectRealtimeVoiceThread).toHaveBeenCalledWith(next);
 });

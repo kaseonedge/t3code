@@ -25,6 +25,12 @@ export function VoiceConversationPanel(props: {
       <span aria-hidden className={`size-2 shrink-0 rounded-full ${TONE_CLASS[status.tone]}`} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{status.label}</p>
+        {props.snapshot?.realtimeTarget ? (
+          <p className="truncate text-xs text-muted-foreground">
+            {props.snapshot.realtimeTarget.title} ·{" "}
+            {props.snapshot.realtimeTarget.crossThread ? "This environment" : "Selected chat"}
+          </p>
+        ) : null}
         {status.detail || props.startDisabledReason ? (
           <p className="truncate text-xs text-muted-foreground">
             {status.detail || (running ? "" : props.startDisabledReason)}
@@ -35,6 +41,10 @@ export function VoiceConversationPanel(props: {
         <Button type="button" size="xs" variant="outline" onClick={props.onStop}>
           <MicOffIcon />
           End
+        </Button>
+      ) : props.snapshot?.phase === "failed" && !props.onStart ? (
+        <Button type="button" size="xs" variant="outline" onClick={props.onStop}>
+          Dismiss
         </Button>
       ) : props.onStart ? (
         <Button

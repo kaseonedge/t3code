@@ -2,7 +2,7 @@ import * as NodeURL from "node:url";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { MessageId, type VoiceSessionEvent } from "@t3tools/contracts";
+import { CommandId, MessageId, ThreadId, type VoiceSessionEvent } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
@@ -34,6 +34,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { withVoiceRouterBrief } from "./routerBrief.ts";
 import * as VoiceSessionService from "./VoiceSessionService.ts";
+import { bindVoiceThreadWork } from "./VoiceThreadWork.ts";
 import { VoiceSpeechProvider, type VoiceSpeechSinks } from "./VoiceSpeechProvider.ts";
 
 const SPOKEN_TURN = `[voice] ${SIMPLE_PROMPT}`;
@@ -46,13 +47,7 @@ const PROVIDER_TURN = withVoiceRouterBrief({
   creationSource: "web",
 }).text;
 
-/**
- * A spoken turn, end to end, with no paid model and no ElevenLabs: the real voice service, the
- * real thread service and orchestrator, the real effect worker and Codex adapter, answered by a
- * recorded Codex session. The recording is strict: it fails unless the prompt the provider is
- * sent is exactly the router brief followed by the `[voice]` message.
- */
-it.live("a spoken turn runs the voice thread through the real dispatch path", () =>
+const replayVoiceTask = (mode: "standard" | "realtime") =>
   Effect.scoped(
     Effect.gen(function* () {
       const fixture = findReplayFixture("simple")!;
@@ -62,7 +57,9 @@ it.live("a spoken turn runs the voice thread through the real dispatch path", ()
       const recorded = yield* fs.readFileString(NodeURL.fileURLToPath(variant.transcriptFile));
       // The recording was made with the bare prompt; the voice thread is sent it marked as spoken.
       const rewritten = yield* decodeProviderReplayNdjson(
-        recorded.replaceAll(SIMPLE_PROMPT, JSON.stringify(PROVIDER_TURN).slice(1, -1)),
+        mode === "standard"
+          ? recorded.replaceAll(SIMPLE_PROMPT, JSON.stringify(PROVIDER_TURN).slice(1, -1))
+          : recorded,
       );
       const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
         materializeReplayTranscriptWorkspace(
@@ -135,6 +132,40 @@ it.live("a spoken turn runs the voice thread through the real dispatch path", ()
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const voice = yield* VoiceSessionService.VoiceSessionService;
         const created = yield* orchestrator.dispatch(createThread);
+        if (mode === "realtime") {
+          const threads = yield* ThreadManagementService.ThreadManagementService;
+          const origin = ThreadId.make("voice:realtime-origin");
+          yield* orchestrator.dispatch({
+            ...createThread,
+            commandId: CommandId.make("voice:realtime-origin-create"),
+            threadId: origin,
+            title: "Primary chat",
+          });
+          const work = bindVoiceThreadWork(threads, {
+            projectId: createThread.projectId,
+            threadId,
+          });
+          const receipt = yield* work.submit("test-realtime-task", SIMPLE_PROMPT, origin);
+          assert.include(receipt, { threadId, taskText: SIMPLE_PROMPT });
+          const result = yield* threads.waitForThread({
+            projectId: createThread.projectId,
+            threadId,
+            runId: receipt.runId,
+            timeoutMs: 10_000,
+            untilDelegatedWorkSettled: true,
+          });
+          assert.equal(result.run?.status, "completed");
+          const recovered = yield* work.recover("test-realtime-task");
+          assert.deepInclude(recovered, { runId: receipt.runId, senderThreadId: origin });
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          assert.include(
+            projection.messages.find((message) => message.role === "assistant")?.text,
+            "fixture simple ok",
+          );
+          const originProjection = yield* orchestrator.getThreadProjection(origin);
+          assert.isEmpty(originProjection.runs);
+          return;
+        }
         const frames = yield* Queue.unbounded<VoiceSessionEvent>();
         yield* voice.open({
           send: (event) => Queue.offer(frames, event),
@@ -178,5 +209,9 @@ it.live("a spoken turn runs the voice thread through the real dispatch path", ()
         assert.isFalse(events.some((event) => event.type === "error"));
       }).pipe(Effect.provide(layerTest));
     }),
-  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+
+it.live.each(["standard", "realtime"] as const)(
+  "a %s voice task runs through real dispatch and Replay",
+  replayVoiceTask,
 );
