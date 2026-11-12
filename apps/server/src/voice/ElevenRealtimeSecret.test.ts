@@ -22,6 +22,10 @@ it.effect(
             assert.equal(body.session.max_duration_seconds, 300);
             assert.equal(body.session.audio.input.format.rate, 24_000);
             assert.equal(body.session.audio.output.voice, "fixture-voice");
+            assert.include(
+              body.session.instructions,
+              "Never infer their name from replayed conversation, chat titles, or tool results.",
+            );
           }
           return HttpClientResponse.fromWeb(
             request,

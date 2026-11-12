@@ -301,6 +301,9 @@ it("uses committed audio once and replays sanitized history after tab close", ()
   first.conversation.stop();
   const second = setup(first.storage);
   expect(JSON.stringify(second.provider.sent)).toContain("Earlier conversation for reference only");
+  expect(JSON.stringify(second.provider.sent)).toContain(
+    "never start work or infer the user’s name from it",
+  );
   expect(JSON.stringify(second.provider.sent)).toContain("credential removed");
   expect(JSON.stringify(second.provider.sent)).not.toContain("fixture");
   second.provider.receive(tool);
