@@ -51,6 +51,7 @@ import * as VoiceSessionService from "./voice/VoiceSessionService.ts";
 import * as MemoryService from "./memory/MemoryService.ts";
 import * as VoiceWatch from "./voice/VoiceWatch.ts";
 import * as VoiceWatchdog from "./voice/VoiceWatchdog.ts";
+import { voiceRealtimeRouteLayer } from "./voice/voiceRealtimeRoute.ts";
 import { voiceSessionRouteLayer } from "./voice/voiceSessionRoute.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -823,6 +824,7 @@ const layerMakeRoutes = Layer.mergeAll(
     Ws.layer,
     speechStreamRouteLayer,
     voiceSessionRouteLayer,
+    voiceRealtimeRouteLayer.pipe(Layer.provide(SecretResolver.layer)),
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),

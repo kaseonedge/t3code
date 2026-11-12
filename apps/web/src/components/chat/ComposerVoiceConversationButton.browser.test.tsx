@@ -34,12 +34,14 @@ function setup(options: {
   readonly settings?: typeof DEFAULT_SERVER_SETTINGS;
   readonly supported?: boolean;
   readonly consented?: boolean;
+  readonly realtime?: boolean;
   readonly phase?: "connecting" | "live";
 }) {
   revokeVoiceConversation();
   if (options.consented ?? true) grantVoiceConversation(environmentId);
   const settings = options.settings ?? ready;
   vi.mocked(useAtomValue).mockReturnValue((options.supported ?? true) as never);
+  if (options.realtime) vi.mocked(useAtomValue).mockReturnValue(true as never);
   vi.mocked(useEnvironmentSettings).mockImplementation(((
     _id: unknown,
     select: (value: unknown) => unknown,
@@ -111,4 +113,22 @@ it.each([
   // Clicking never grants consent on the user's behalf.
   if ("consented" in options)
     expect(window.localStorage.getItem("t3code:voice-conversation-grant:v1")).toBeNull();
+});
+
+it("opts into realtime on the selected thread while the standard button keeps its existing route", async () => {
+  setup({ realtime: true });
+  const threadId = ThreadId.make("selected-work-thread");
+  await using screen = await render(
+    <ComposerVoiceConversationButton environmentId={environmentId} threadId={threadId} />,
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: "Start ElevenLabs Realtime in this thread" }),
+  );
+  expect(startVoiceConversation).toHaveBeenLastCalledWith(
+    expect.objectContaining({ realtimeThreadId: threadId }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Start voice conversation" }));
+  expect(vi.mocked(startVoiceConversation).mock.lastCall?.[0]).not.toHaveProperty(
+    "realtimeThreadId",
+  );
 });

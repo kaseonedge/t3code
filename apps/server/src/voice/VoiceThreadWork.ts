@@ -21,6 +21,10 @@ export function bindVoiceThreadWork(
   target: { readonly projectId: ProjectId; readonly threadId: ThreadId },
 ) {
   const { projectId, threadId } = target;
+  const operationKey = (operationId: string) =>
+    `voice-work:${encodeURIComponent(threadId)}:${encodeURIComponent(operationId)}`;
+  const operationMessageId = (operationId: string) =>
+    MessageId.make(`message:${operationKey(operationId)}`);
   return {
     dispatchUtterance: Effect.fn("VoiceThreadWork.dispatchUtterance")(function* (
       operationId: string,
@@ -40,12 +44,11 @@ export function bindVoiceThreadWork(
       });
     }),
     submit: Effect.fn("VoiceThreadWork.submit")(function* (operationId: string, text: string) {
-      const id = `voice-work:${encodeURIComponent(threadId)}:${encodeURIComponent(operationId)}`;
       const receipt = yield* threads.sendToThread({
         projectId,
         threadId,
-        commandId: CommandId.make(id),
-        messageId: MessageId.make(`message:${id}`),
+        commandId: CommandId.make(operationKey(operationId)),
+        messageId: operationMessageId(operationId),
         text,
         attachments: [],
         createdBy: "agent",
@@ -59,6 +62,14 @@ export function bindVoiceThreadWork(
         status: receipt.run.status,
         delivery: receipt.delivery,
       };
+    }),
+    recover: Effect.fn("VoiceThreadWork.recover")(function* (operationId: string) {
+      const { messages } = yield* threads.getProjectThreadRecords(
+        { projectId, threadId },
+        ["messages"],
+        { messageIds: [operationMessageId(operationId)] },
+      );
+      return messages[0]?.runId ?? null;
     }),
     status: Effect.fn("VoiceThreadWork.status")(function* (runId: RunId) {
       const { runs } = yield* threads.getProjectThreadRecords({ projectId, threadId }, ["runs"], {

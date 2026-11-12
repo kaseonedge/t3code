@@ -3659,7 +3659,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </>
                     ) : null}
                     {voiceInputActive ? null : (
-                      <ComposerVoiceConversationButton environmentId={environmentId} />
+                      <ComposerVoiceConversationButton
+                        environmentId={environmentId}
+                        threadId={activeThread?.id}
+                      />
                     )}
                     <VoiceInputSetup
                       environmentId={speechInput.transcriptionEnvironmentId}

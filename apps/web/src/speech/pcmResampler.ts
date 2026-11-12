@@ -8,14 +8,14 @@ export class PcmResampler {
   private phase = 0;
   private readonly ratio: number;
 
-  constructor(sampleRate: number) {
-    if (sampleRate < TARGET_RATE)
-      throw new Error("Microphone sample rate must be at least 16 kHz.");
-    this.ratio = sampleRate / TARGET_RATE;
-    this.coefficients = new Float64Array(sampleRate === TARGET_RATE ? 1 : 63);
+  constructor(sampleRate: number, targetRate = TARGET_RATE) {
+    if (sampleRate < targetRate)
+      throw new Error("Microphone sample rate must be at least the target rate.");
+    this.ratio = sampleRate / targetRate;
+    this.coefficients = new Float64Array(sampleRate === targetRate ? 1 : 63);
     this.history = new Float32Array(this.coefficients.length);
     const middle = (this.coefficients.length - 1) / 2;
-    const cutoff = 7_200 / sampleRate;
+    const cutoff = (targetRate * 0.45) / sampleRate;
     let sum = 0;
     for (let i = 0; i < this.coefficients.length; i++) {
       const x = i - middle;
