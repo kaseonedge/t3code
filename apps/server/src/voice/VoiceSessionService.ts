@@ -1,12 +1,8 @@
 import {
   CloudSpeechApiKey,
-  CommandId,
   isSecretReference,
-  MessageId,
   type OrchestrationV2Run,
   type ThreadId,
-  VOICE_MESSAGE_ID_PREFIX,
-  VOICE_UTTERANCE_PREFIX,
   type VoiceHealthEntry,
   type VoiceSayInput,
   type VoiceSayResult,
@@ -33,6 +29,7 @@ import { spokenForm } from "./spokenForm.ts";
 import { voiceSayLimitViolation } from "./turnFilter.ts";
 import { makeVoiceSession, type VoiceSession } from "./VoiceSession.ts";
 import * as VoiceSpeechProvider from "./VoiceSpeechProvider.ts";
+import { bindVoiceThreadWork } from "./VoiceThreadWork.ts";
 
 const isApiKey = Schema.is(CloudSpeechApiKey);
 const MAX_HEALTH_ENTRIES = 50;
@@ -130,29 +127,15 @@ const make = Effect.gen(function* () {
   const fail = (reason: VoiceSessionError["reason"]) => new VoiceSessionError({ reason });
   const readSettings = settings.getSettings.pipe(Effect.mapError(() => fail("unavailable")));
 
-  const dispatchUtterance = (threadId: ThreadId) =>
+  const dispatchUtterance = (work: ReturnType<typeof bindVoiceThreadWork>) =>
     Effect.fn("VoiceSessionService.dispatchUtterance")(function* (text: string) {
       saidByTool = false;
       unanswered = true;
       const id = yield* random.uuidV4();
-      yield* threads
-        .dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make(`voice:${id}`),
-          threadId,
-          messageId: MessageId.make(`${VOICE_MESSAGE_ID_PREFIX}${id}`),
-          text: `${VOICE_UTTERANCE_PREFIX}${text}`,
-          attachments: [],
-          createdBy: "user",
-          creationSource: "web",
-          // Steers a running turn where the provider can, so the user is heard mid-task.
-          deliveryIntent: "auto",
-          dispatchMode: { type: "start_immediately" },
-        })
-        .pipe(
-          Effect.tapError((cause) => Effect.logWarning("voice turn was not dispatched", { cause })),
-          Effect.mapError(() => fail("router-unavailable")),
-        );
+      yield* work.dispatchUtterance(id, text).pipe(
+        Effect.tapError((cause) => Effect.logWarning("voice turn was not dispatched", { cause })),
+        Effect.mapError(() => fail("router-unavailable")),
+      );
     });
 
   /**
@@ -226,11 +209,15 @@ const make = Effect.gen(function* () {
     );
     if (!isApiKey(key)) return yield* fail("unreadable-key");
     const config = { ...elevenLabs, apiKey: Redacted.make(key), voiceId: elevenLabs.voiceId };
+    const work = bindVoiceThreadWork(threads, {
+      projectId: shell.projectId,
+      threadId: voiceRouterThreadId,
+    });
     const session = yield* makeVoiceSession({
       connect: (sinks) => speech.connect(config, sinks),
       onHealth: noteHealth,
       ...io,
-      dispatchUtterance: dispatchUtterance(voiceRouterThreadId),
+      dispatchUtterance: dispatchUtterance(work),
     });
     active = session;
     saidByTool = false;
