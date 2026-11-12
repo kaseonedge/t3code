@@ -28,10 +28,17 @@ export interface VoiceConversationSnapshot extends VoiceConversationState {
   readonly environmentId: EnvironmentId;
   /** The last turn was handed to the voice thread and nothing has answered yet. */
   readonly acknowledged: boolean;
+  readonly realtimeTarget?: {
+    readonly threadId: ThreadId;
+    readonly title: string;
+    readonly crossThread: boolean;
+  };
 }
 
 let snapshot: VoiceConversationSnapshot | null = null;
-let active: { readonly stop: () => void } | undefined;
+let active:
+  | { readonly stop: () => void; readonly selectThread: (threadId: ThreadId) => void }
+  | undefined;
 const listeners = new Set<() => void>();
 const publish = (next: VoiceConversationSnapshot | null) => {
   snapshot = next;
@@ -101,20 +108,39 @@ export async function startVoiceConversation(input: {
   readonly grantId: string;
   readonly microphoneId: string;
   readonly realtimeThreadId?: ThreadId;
+  readonly realtimeCrossThread?: boolean;
 }) {
   if (active) return;
   const canSend = bindVoiceConversationGrant(input.grantId, input.environmentId);
   if (!canSend()) return;
   let stopped = false;
-  let conversation: Pick<VoiceConversation, "feed" | "stop"> | undefined;
+  let conversation:
+    | (Pick<VoiceConversation, "feed" | "stop"> & {
+        readonly selectThread?: (threadId: ThreadId) => void;
+      })
+    | undefined;
   let context: AudioContext | undefined;
   let stream: MediaStream | undefined;
-  const base = { environmentId: input.environmentId, acknowledged: false };
+  let realtimeTarget =
+    input.realtimeThreadId === undefined
+      ? undefined
+      : {
+          threadId: input.realtimeThreadId,
+          title: "Current chat",
+          crossThread: input.realtimeCrossThread === true,
+        };
+  const base = {
+    environmentId: input.environmentId,
+    acknowledged: false,
+    ...(realtimeTarget === undefined ? {} : { realtimeTarget }),
+  };
+  const audioOutputError =
+    "Audio output could not start. Check the browser’s sound permissions and try again.";
   const release = () => {
     stopped = true;
     stream?.getTracks().forEach((track) => track.stop());
     void context?.close().catch(() => undefined);
-    active = undefined;
+    if (active === session) active = undefined;
   };
   const failed = (message: string) => {
     release();
@@ -125,7 +151,8 @@ export async function startVoiceConversation(input: {
       error: { reason: "connection", message },
     });
   };
-  active = {
+  const session = {
+    selectThread: (threadId: ThreadId) => conversation?.selectThread?.(threadId),
     stop: () => {
       if (conversation) conversation.stop();
       else {
@@ -134,8 +161,16 @@ export async function startVoiceConversation(input: {
       }
     },
   };
+  active = session;
   publish({ ...INITIAL_VOICE_CONVERSATION_STATE, ...base });
   try {
+    // Resume while the start click still has user activation.
+    context = new AudioContext();
+    const audio = context;
+    const resumed = audio.resume().then(
+      () => true,
+      () => false,
+    );
     stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         ...(input.microphoneId ? { deviceId: { exact: input.microphoneId } } : {}),
@@ -145,8 +180,21 @@ export async function startVoiceConversation(input: {
       },
     });
     if (stopped) return release();
-    context = new AudioContext();
-    const audio = context;
+    if (audio.state !== "running") {
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      const ready = await Promise.race([
+        resumed,
+        new Promise<false>((resolve) => {
+          deadline = setTimeout(() => resolve(false), 1500);
+        }),
+      ]);
+      clearTimeout(deadline);
+      if (stopped) return;
+      if (!ready) {
+        failed(audioOutputError);
+        return;
+      }
+    }
     await audio.audioWorklet.addModule(workletUrl);
     const url = await runEnvironmentSpeech(
       getEnvironmentMediaSocketUrl(
@@ -177,6 +225,7 @@ export async function startVoiceConversation(input: {
           ...state,
           environmentId: input.environmentId,
           acknowledged: answered ? false : (snapshot?.acknowledged ?? false),
+          ...(realtimeTarget === undefined ? {} : { realtimeTarget }),
         });
         if (state.phase === "ended" || state.phase === "failed") {
           node.disconnect();
@@ -186,10 +235,18 @@ export async function startVoiceConversation(input: {
       },
     };
     if (input.realtimeThreadId) {
-      const storageKey = `t3.voice-realtime.v1.${input.environmentId}.${input.realtimeThreadId}`;
+      const legacyKey = `t3.voice-realtime.v1.${input.environmentId}.${input.realtimeThreadId}`;
+      const storageKey = input.realtimeCrossThread
+        ? `t3.voice-realtime.v2.${input.environmentId}`
+        : legacyKey;
       conversation = openElevenRealtimeConversation({
         ...options,
         threadId: input.realtimeThreadId,
+        ...(input.realtimeCrossThread ? { crossThread: true } : {}),
+        onTarget: (threadId, title) => {
+          realtimeTarget = { threadId, title, crossThread: input.realtimeCrossThread === true };
+          if (snapshot) publish({ ...snapshot, realtimeTarget });
+        },
         newOperationId: randomUUID,
         record: openRealtimeConversationRecord(localStorage, storageKey, Date.now),
       });
@@ -205,11 +262,11 @@ export async function startVoiceConversation(input: {
     audio.createMediaStreamSource(stream).connect(node);
     // The processor emits silence, keeping the graph active without microphone playback.
     node.connect(audio.destination);
-    await audio.resume();
     // oxlint-disable-next-line unicorn/require-post-message-target-origin -- AudioWorklet MessagePorts do not accept a target origin
     node.port.postMessage("start");
   } catch (error) {
     if (stopped) return;
+    conversation?.stop();
     failed(
       error instanceof DOMException && error.name === "NotAllowedError"
         ? "Allow microphone access in your browser to start a voice conversation."
@@ -219,5 +276,10 @@ export async function startVoiceConversation(input: {
 }
 
 export function stopVoiceConversation() {
-  active?.stop();
+  if (active) active.stop();
+  else publish(null);
+}
+
+export function selectRealtimeVoiceThread(threadId: ThreadId) {
+  active?.selectThread(threadId);
 }

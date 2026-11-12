@@ -1855,3 +1855,62 @@ it.effect("dispatch records the command outcome and its duration", () =>
     assert.strictEqual((yield* durations).count - durationsBefore, 1);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("persists deduplicated voice turns in their selected chats without starting runs", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const primary = ThreadId.make("thread:voice-primary");
+    const other = ThreadId.make("thread:voice-other");
+    for (const threadId of [primary, other]) {
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: ProjectId.make("project:voice"),
+        title: threadId,
+        modelSelection,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+    }
+    const input = {
+      type: "voice.transcript.record",
+      commandId: CommandId.make("voice:input"),
+      messageId: MessageId.make("voice-message:input"),
+      threadId: primary,
+      role: "user",
+      text: "Can you check the build?",
+    } as const;
+    yield* orchestrator.dispatch(input);
+    yield* orchestrator.dispatch(input);
+    yield* orchestrator.dispatch({
+      ...input,
+      commandId: CommandId.make("voice:reply"),
+      messageId: MessageId.make("voice:reply"),
+      threadId: other,
+      role: "assistant",
+      text: "The build passed.",
+    });
+    for (const [threadId, role, text] of [
+      [primary, "user", input.text],
+      [other, "assistant", "The build passed."],
+    ] as const) {
+      const { projection } = yield* orchestrator.getThreadSnapshotWindow(threadId, {
+        rowLimit: 20,
+      });
+      assert.deepEqual(
+        projection.messages.map((message) => [message.role, message.text]),
+        [[role, text]],
+      );
+      assert.deepEqual(
+        projection.visibleTurnItems.map(({ item }) => item.type),
+        [`${role}_message`],
+      );
+      assert.isEmpty(projection.runs);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);

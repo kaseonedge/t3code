@@ -17,10 +17,16 @@ export function voiceConversationStatus(
   if (snapshot.phase === "failed")
     return { label: "Stopped", tone: "error", detail: snapshot.error?.message ?? "" };
   if (snapshot.phase === "connecting") return { label: "Connecting", tone: "idle", detail: "" };
+  if (snapshot.error)
+    return { label: "Voice issue", tone: "error", detail: snapshot.error.message };
   if (snapshot.userSpeaking) return { label: "Hearing you", tone: "live", detail: snapshot.heard };
   if (snapshot.speaking)
     return {
-      label: snapshot.speaking.priority === "question" ? "Asking you" : "Speaking",
+      label: snapshot.realtimeTarget
+        ? "Audio received"
+        : snapshot.speaking.priority === "question"
+          ? "Asking you"
+          : "Speaking",
       tone: snapshot.speaking.priority === "question" ? "attention" : "live",
       detail: snapshot.speaking.text,
     };

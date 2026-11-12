@@ -1,15 +1,18 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
+import { useState } from "react";
 import { AudioLinesIcon } from "lucide-react";
 
 import { useClientSettings, useEnvironmentSettings } from "../../hooks/useSettings";
 import {
+  selectRealtimeVoiceThread,
   startVoiceConversation,
   stopVoiceConversation,
   useVoiceConversation,
@@ -21,6 +24,15 @@ import {
 } from "../../speech/voiceConversationStatus";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -34,6 +46,7 @@ export function ComposerVoiceConversationButton(props: {
 }) {
   const { environmentId, threadId } = props;
   const navigate = useNavigate();
+  const [confirmCrossThread, setConfirmCrossThread] = useState(false);
   const supported = useAtomValue(
     serverEnvironment.configValueAtom(environmentId),
     (config) => config?.environment.capabilities.voiceConversation === true,
@@ -49,6 +62,7 @@ export function ComposerVoiceConversationButton(props: {
   );
   const prepared = Option.getOrNull(usePreparedConnection(environmentId));
   const canTalk = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const grant = useVoiceConversationGrant();
   const microphoneId = useClientSettings().voiceMicrophone;
   const conversation = useVoiceConversation();
@@ -73,7 +87,24 @@ export function ComposerVoiceConversationButton(props: {
     ? elsewhere
       ? "Running on another environment"
       : voiceConversationStatus(conversation).label
-    : blocker;
+    : conversation?.environmentId === environmentId
+      ? (conversation.error?.message ?? blocker)
+      : blocker;
+  const activeTarget = !elsewhere && running ? conversation?.realtimeTarget : undefined;
+  const realtime =
+    realtimeSupported &&
+    !running &&
+    threadId &&
+    canTalk &&
+    canRead &&
+    prepared &&
+    elevenLabs.apiKey !== "" &&
+    elevenLabs.voiceId &&
+    !elevenLabs.zeroRetention &&
+    elevenLabs.serverLocation === "global" &&
+    grant?.destination.environmentId === environmentId
+      ? { prepared, environmentId, grantId: grant.id, microphoneId, realtimeThreadId: threadId }
+      : null;
 
   return (
     <>
@@ -113,34 +144,60 @@ export function ComposerVoiceConversationButton(props: {
           {detail ? ` · ${detail}` : ""}
         </TooltipPopup>
       </Tooltip>
-      {realtimeSupported &&
-      !running &&
-      threadId &&
-      canTalk &&
-      prepared &&
-      elevenLabs.apiKey !== "" &&
-      elevenLabs.voiceId &&
-      !elevenLabs.zeroRetention &&
-      elevenLabs.serverLocation === "global" &&
-      grant?.destination.environmentId === environmentId ? (
+      {activeTarget && threadId && activeTarget.threadId !== threadId ? (
         <Button
           type="button"
           size="sm"
           variant="ghost"
-          aria-label="Start ElevenLabs Realtime in this thread"
-          title="Start ElevenLabs Realtime in this thread. Connected time may be billed."
-          onClick={() =>
-            void startVoiceConversation({
-              prepared,
-              environmentId,
-              grantId: grant.id,
-              microphoneId,
-              realtimeThreadId: threadId,
-            })
-          }
+          onClick={() => selectRealtimeVoiceThread(threadId)}
         >
-          Realtime
+          Use this chat for voice
         </Button>
+      ) : null}
+      {realtime ? (
+        <>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            aria-label="Start ElevenLabs Realtime in this thread"
+            title="Start ElevenLabs Realtime in this chat. Connected time may be billed."
+            onClick={() => void startVoiceConversation(realtime)}
+          >
+            Realtime
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setConfirmCrossThread(true)}
+          >
+            Realtime across chats
+          </Button>
+          <AlertDialog open={confirmCrossThread} onOpenChange={setConfirmCrossThread}>
+            <AlertDialogPopup>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Start Realtime across chats?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  On request, voice can find and read chats and queue work in this environment.
+                  Relevant excerpts and results are sent to ElevenLabs. The current chat receives
+                  the conversation. Connected time may be billed.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+                <Button
+                  onClick={() => {
+                    setConfirmCrossThread(false);
+                    void startVoiceConversation({ ...realtime, realtimeCrossThread: true });
+                  }}
+                >
+                  Start across chats
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogPopup>
+          </AlertDialog>
+        </>
       ) : null}
     </>
   );

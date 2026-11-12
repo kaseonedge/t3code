@@ -43,7 +43,11 @@ export function bindVoiceThreadWork(
         dispatchMode: { type: "start_immediately" },
       });
     }),
-    submit: Effect.fn("VoiceThreadWork.submit")(function* (operationId: string, text: string) {
+    submit: Effect.fn("VoiceThreadWork.submit")(function* (
+      operationId: string,
+      text: string,
+      senderThreadId?: ThreadId,
+    ) {
       const receipt = yield* threads.sendToThread({
         projectId,
         threadId,
@@ -54,6 +58,7 @@ export function bindVoiceThreadWork(
         createdBy: "agent",
         creationSource: "server",
         mode: "queue",
+        ...(senderThreadId === undefined ? {} : { senderThreadId }),
       });
       return {
         threadId,
@@ -71,7 +76,9 @@ export function bindVoiceThreadWork(
         { messageIds: [operationMessageId(operationId)] },
       );
       const message = messages[0];
-      return message === undefined ? null : { runId: message.runId, taskText: message.text };
+      return message === undefined
+        ? null
+        : { runId: message.runId, taskText: message.text, senderThreadId: message.senderThreadId };
     }),
     status: Effect.fn("VoiceThreadWork.status")(function* (runId: RunId) {
       const { runs } = yield* threads.getProjectThreadRecords({ projectId, threadId }, ["runs"], {

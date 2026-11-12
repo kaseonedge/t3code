@@ -68,20 +68,25 @@ an answer is ready: a short tone, an on-screen "Heard you", or nothing.
 
 ## Realtime conversation
 
-In an existing thread, choose **Realtime** beside the standard voice button to
-try Eleven Realtime Mini. The conversation can continue while a request runs in
-that thread. Ask for the status of an accepted request at any time. Review any
-approval in T3 Code. Interrupting speech leaves accepted work running.
+In an existing chat, choose **Realtime** to talk while T3 works in the
+background. Finished spoken exchanges appear in that chat. The sidebar shows
+the current chat, and **Use this chat for voice** changes where new exchanges
+appear.
+
+Choose **Realtime across chats** and confirm if you want voice to find and read
+chats or send work to another chat in the connected environment. On request,
+ElevenLabs receives relevant excerpts and results. The current chat receives
+the conversation and attributed task results. Review approvals in T3 Code.
+Interrupting audio leaves accepted work running.
 
 Realtime uses the configured ElevenLabs voice and requires workspace access to
 the Realtime API. Connected time may be billed, and a session lasts up to five
-minutes. Use the standard voice button to return to the original conversation
-mode. Realtime is available with the global endpoint and requires zero retention
-to be off.
+minutes. Realtime requires the global endpoint and zero retention to be off.
+The standard voice button uses the voice thread selected in Settings.
 
-Realtime keeps recent conversation text and unfinished task receipts in this
-browser for up to seven days. Starting Realtime again in the same thread can
-restore that context and recover results whose audio did not finish playing.
+Realtime keeps a short record of recent exchanges and unfinished tasks in this
+browser for up to seven days. Reopen the same mode to recover results whose
+audio did not finish playing. For single-chat mode, reopen the starting chat.
 
 ## Hear about other work
 

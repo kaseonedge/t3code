@@ -19,9 +19,12 @@ export function VoiceLiveTranscript(props: {
   );
   if (conversation?.phase !== "live" || conversation.environmentId !== props.environmentId)
     return null;
+  if (conversation.realtimeTarget && props.threadId !== conversation.realtimeTarget.threadId)
+    return null;
   const hearing = !conversation.heardFinal && conversation.heard.trim() !== "";
   // In the voice thread the reply is already on screen as it is written, so it is not shown twice.
-  const speaking = props.threadId === voiceThreadId ? null : conversation.speaking;
+  const speaking =
+    !conversation.realtimeTarget && props.threadId === voiceThreadId ? null : conversation.speaking;
   if (!hearing && speaking === null) return null;
   return (
     <div
@@ -32,7 +35,9 @@ export function VoiceLiveTranscript(props: {
     >
       {speaking ? (
         <p className="min-w-0 text-secondary-label italic">
-          <span className="mr-2 text-xs not-italic text-muted-foreground">Speaking</span>{" "}
+          <span className="mr-2 text-xs not-italic text-muted-foreground">
+            {conversation.realtimeTarget ? "Assistant" : "Speaking"}
+          </span>{" "}
           {speaking.text}
         </p>
       ) : null}

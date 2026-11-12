@@ -291,9 +291,9 @@ it("uses committed audio once and replays sanitized history after tab close", ()
   first.provider.receive({ ...tool, call_id: "tool-b" });
   first.provider.receive({ type: "input_audio_buffer.committed", item_id: "spoken" });
   first.provider.receive({ ...tool, call_id: "tool-c" });
-  expect(first.control.sent.slice(2)).toEqual([
-    { type: "submit", operationId: "work-1", text: "Check the build" },
-  ]);
+  expect(
+    first.control.sent.filter((entry) => (entry as { type: string }).type === "submit"),
+  ).toEqual([{ type: "submit", operationId: "work-1", text: "Check the build" }]);
   first.conversation.stop();
   const second = setup(first.storage);
   expect(JSON.stringify(second.provider.sent)).toContain("Earlier conversation for reference only");
@@ -491,4 +491,96 @@ it("frees an unsubmitted operation only after T3 confirms it is missing", () => 
   });
   expect(next.record.pending()).not.toContain("work-1");
   expect(next.record.pending()).toContain("previous");
+});
+
+it("persists a committed utterance once even when transcription arrives before commit", () => {
+  const { control, provider, threadId } = setup();
+  const transcript = {
+    type: "conversation.item.input_audio_transcription.completed",
+    item_id: "utterance",
+    transcript: "Hello from the current chat",
+  };
+  provider.receive(transcript);
+  expect(control.sent).not.toContainEqual(expect.objectContaining({ type: "transcript" }));
+  provider.receive({ type: "input_audio_buffer.committed", item_id: "utterance" });
+  provider.receive(transcript);
+  expect(control.sent.filter((event) => (event as { type: string }).type === "transcript")).toEqual(
+    [expect.objectContaining({ threadId, role: "user", text: transcript.transcript })],
+  );
+});
+
+it("accepts compatible PCM output and ignores chunks from an interrupted response", () => {
+  const { provider, playback } = setup();
+  provider.receive({ type: "response.created", response: { id: "reply" } });
+  provider.receive({ type: "input_audio_buffer.speech_started", item_id: "barge-in" });
+  provider.receive({
+    type: "response.audio.delta",
+    item_id: "old-output",
+    response_id: "reply",
+    delta: "AQI=",
+  });
+  expect(playback.enqueue).not.toHaveBeenCalled();
+  provider.receive({ type: "response.done", response: { id: "reply", status: "cancelled" } });
+  provider.receive({ type: "response.created", response: { id: "new-reply" } });
+  provider.receive({
+    type: "response.audio.delta",
+    item_id: "new-output",
+    response_id: "new-reply",
+    delta: "AQI=",
+  });
+  expect(playback.enqueue).toHaveBeenCalledOnce();
+});
+
+it("keeps an in-progress utterance in its original chat and records later utterances in the new chat", () => {
+  const { control, provider, conversation, threadId } = setup();
+  const nextThread = ThreadId.make("thread:next");
+  provider.receive({ type: "input_audio_buffer.speech_started", item_id: "first" });
+  conversation.selectThread(nextThread);
+  expect(control.sent).toContainEqual({ type: "select", threadId: nextThread });
+  control.receive({ type: "target", threadId: nextThread, title: "Next chat" });
+  for (const item of ["first", "second"]) {
+    provider.receive({ type: "input_audio_buffer.committed", item_id: item });
+    provider.receive({
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: item,
+      transcript: item,
+    });
+  }
+  expect(control.sent).toContainEqual({
+    type: "transcript",
+    operationId: "item-first",
+    threadId,
+    role: "user",
+    text: "first",
+  });
+  expect(control.sent).toContainEqual({
+    type: "transcript",
+    operationId: "item-second",
+    threadId: nextThread,
+    role: "user",
+    text: "second",
+  });
+});
+
+it("retries unacknowledged transcript writes after reconnect with the same IDs", () => {
+  const first = setup();
+  first.provider.receive({ type: "input_audio_buffer.committed", item_id: "item-1" });
+  first.provider.receive({
+    type: "conversation.item.input_audio_transcription.completed",
+    item_id: "item-1",
+    transcript: "The password is hunter2.",
+  });
+  first.conversation.stop();
+  const next = setup(first.storage);
+  expect(next.control.sent).toContainEqual({
+    type: "transcript",
+    operationId: "item-item-1",
+    threadId: first.threadId,
+    role: "user",
+    text: "The [credential removed].",
+  });
+  next.control.receive({ type: "transcript-saved", operationId: "item-item-1" });
+  next.conversation.stop();
+  const last = setup(first.storage);
+  expect(last.control.sent).not.toContainEqual(expect.objectContaining({ type: "transcript" }));
 });

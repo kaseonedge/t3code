@@ -39,3 +39,22 @@ it.effect(
       assert.equal(value, "fixture-ephemeral");
     }),
 );
+
+it.effect("reports a sanitized configuration error without surfacing provider details", () =>
+  Effect.gen(function* () {
+    const client = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({ detail: "sensitive fixture returned by provider" }, { status: 422 }),
+        ),
+      ),
+    );
+    const result = yield* mintElevenRealtimeSecret(
+      Redacted.make("fixture-key"),
+      "fixture-voice",
+    ).pipe(Effect.provideService(HttpClient.HttpClient, client), Effect.flip);
+    assert.equal(result.reason, "realtime-configuration-rejected");
+    assert.notInclude(result.message, "sensitive fixture");
+  }),
+);
