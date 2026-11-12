@@ -300,3 +300,50 @@ export const VoiceStatusResult = Schema.Struct({
   ),
 });
 export type VoiceStatusResult = typeof VoiceStatusResult.Type;
+
+export const VOICE_REALTIME_PATH = "/ws/voice-realtime";
+export const VOICE_REALTIME_SAMPLE_RATE = 24_000;
+export const VOICE_REALTIME_MAX_COMMAND_BYTES = 32_768;
+
+const VoiceOperationId = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{1,128}$/));
+export const VoiceRealtimeCommand = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("start"), threadId: ThreadId }),
+  Schema.Struct({
+    type: Schema.Literal("submit"),
+    operationId: VoiceOperationId,
+    text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4000)),
+  }),
+  Schema.Struct({ type: Schema.Literal("recover"), operationId: VoiceOperationId }),
+  Schema.Struct({ type: Schema.Literal("stop") }),
+]);
+export type VoiceRealtimeCommand = typeof VoiceRealtimeCommand.Type;
+
+export const VoiceRealtimeEvent = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("ready"), value: Schema.String, threadId: ThreadId }),
+  Schema.Struct({
+    type: Schema.Literal("receipt"),
+    operationId: VoiceOperationId,
+    runId: Schema.String,
+    status: Schema.String,
+    link: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("result"),
+    operationId: VoiceOperationId,
+    resultId: Schema.String,
+    sourceRunId: Schema.String,
+    threadId: ThreadId,
+    threadTitle: Schema.String,
+    taskLabel: Schema.String,
+    status: Schema.String,
+    text: Schema.String,
+    link: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("error"),
+    operationId: Schema.optional(VoiceOperationId),
+    reason: Schema.optional(Schema.Literal("operation-not-found")),
+    message: Schema.String,
+  }),
+]);
+export type VoiceRealtimeEvent = typeof VoiceRealtimeEvent.Type;

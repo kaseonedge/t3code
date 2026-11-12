@@ -10,10 +10,16 @@ import {
 import { getEnvironmentMediaSocketUrl } from "@t3tools/client-runtime/voice-input";
 import {
   type EnvironmentId,
+  type ThreadId,
+  VOICE_REALTIME_PATH,
+  VOICE_REALTIME_SAMPLE_RATE,
   VOICE_SESSION_OUTPUT_SAMPLE_RATE,
   VOICE_SESSION_PATH,
 } from "@t3tools/contracts";
 import { useSyncExternalStore } from "react";
+import { randomUUID } from "../lib/utils";
+import { openRealtimeConversationRecord } from "./realtimeConversationRecord";
+import { openElevenRealtimeConversation } from "./elevenRealtimeConversation";
 import workletUrl from "./pcmWorklet.ts?worker&url";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { bindVoiceConversationGrant, readVoiceAcknowledgement } from "./voiceConversationConsent";
@@ -94,12 +100,13 @@ export async function startVoiceConversation(input: {
   readonly environmentId: EnvironmentId;
   readonly grantId: string;
   readonly microphoneId: string;
+  readonly realtimeThreadId?: ThreadId;
 }) {
   if (active) return;
   const canSend = bindVoiceConversationGrant(input.grantId, input.environmentId);
   if (!canSend()) return;
   let stopped = false;
-  let conversation: VoiceConversation | undefined;
+  let conversation: Pick<VoiceConversation, "feed" | "stop"> | undefined;
   let context: AudioContext | undefined;
   let stream: MediaStream | undefined;
   const base = { environmentId: input.environmentId, acknowledged: false };
@@ -142,14 +149,20 @@ export async function startVoiceConversation(input: {
     const audio = context;
     await audio.audioWorklet.addModule(workletUrl);
     const url = await runEnvironmentSpeech(
-      getEnvironmentMediaSocketUrl(input.prepared, VOICE_SESSION_PATH),
+      getEnvironmentMediaSocketUrl(
+        input.prepared,
+        input.realtimeThreadId ? VOICE_REALTIME_PATH : VOICE_SESSION_PATH,
+      ),
     );
     if (stopped) return release();
     const node = new AudioWorkletNode(audio, "t3-pcm-capture", {
       channelCount: 1,
-      processorOptions: { live: true },
+      processorOptions: {
+        live: true,
+        ...(input.realtimeThreadId ? { outputSampleRate: VOICE_REALTIME_SAMPLE_RATE } : {}),
+      },
     });
-    conversation = openVoiceConversation({
+    const options: Parameters<typeof openVoiceConversation>[0] = {
       url,
       playback: createVoicePlayback(audioSink(audio)),
       canSend,
@@ -171,7 +184,18 @@ export async function startVoiceConversation(input: {
           release();
         }
       },
-    });
+    };
+    if (input.realtimeThreadId) {
+      const storageKey = `t3.voice-realtime.v1.${input.environmentId}.${input.realtimeThreadId}`;
+      conversation = openElevenRealtimeConversation({
+        ...options,
+        threadId: input.realtimeThreadId,
+        newOperationId: randomUUID,
+        record: openRealtimeConversationRecord(localStorage, storageKey, Date.now),
+      });
+    } else {
+      conversation = openVoiceConversation(options);
+    }
     const live = conversation;
     node.port.onmessage = ({ data }: MessageEvent<Float32Array | number | string>) => {
       if (data instanceof Float32Array) live.feed(data);

@@ -186,6 +186,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   cloudVoiceTranscription: Schema.optionalKey(Schema.Boolean),
   /** Server holds spoken conversations with its voice thread over `/ws/voice-session`. */
   voiceConversation: Schema.optionalKey(Schema.Boolean),
+  voiceRealtime: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

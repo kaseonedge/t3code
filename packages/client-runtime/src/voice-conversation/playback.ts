@@ -80,6 +80,9 @@ export function createVoicePlayback(sink: VoiceAudioSink) {
       current = undefined;
       return played;
     },
+    isDrained(speechId: number): boolean {
+      return current?.id === speechId && sink.now() >= current.endsAt;
+    },
     /** Silences everything, as when the conversation ends. */
     reset() {
       if (current) stop(current);

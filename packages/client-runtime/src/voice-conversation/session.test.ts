@@ -38,6 +38,7 @@ function connect(canSend = () => true) {
     enqueue: vi.fn(),
     clear: vi.fn(() => 420),
     reset: vi.fn(),
+    isDrained: vi.fn(() => false),
     adjustVolume: vi.fn(() => 1),
   } satisfies VoicePlayback;
   const onAcknowledged = vi.fn();

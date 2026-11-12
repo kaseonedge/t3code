@@ -66,6 +66,23 @@ couple of sentences at a time; the full text is always in the voice thread.
 **When your turn is heard** sets how this device confirms it heard you before
 an answer is ready: a short tone, an on-screen "Heard you", or nothing.
 
+## Realtime conversation
+
+In an existing thread, choose **Realtime** beside the standard voice button to
+try Eleven Realtime Mini. The conversation can continue while a request runs in
+that thread. Ask for the status of an accepted request at any time. Review any
+approval in T3 Code. Interrupting speech leaves accepted work running.
+
+Realtime uses the configured ElevenLabs voice and requires workspace access to
+the Realtime API. Connected time may be billed, and a session lasts up to five
+minutes. Use the standard voice button to return to the original conversation
+mode. Realtime is available with the global endpoint and requires zero retention
+to be off.
+
+Realtime keeps recent conversation text and unfinished task receipts in this
+browser for up to seven days. Starting Realtime again in the same thread can
+restore that context and recover results whose audio did not finish playing.
+
 ## Hear about other work
 
 The voice thread reports finished runs and requests for your approval or answer

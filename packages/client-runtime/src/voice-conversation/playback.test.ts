@@ -45,12 +45,15 @@ it("plays chunks back to back and reports exactly how much was heard when cleare
 it("never reports more than was sent, or audio that had not started", () => {
   const early = sink();
   early.playback.enqueue(1, pcm(500));
+  expect(early.playback.isDrained(1)).toBe(false);
   expect(early.playback.clear(1)).toBe(0);
 
   const late = sink();
   late.playback.enqueue(1, pcm(500));
   late.clock.now = 60;
+  expect(late.playback.isDrained(1)).toBe(true);
   expect(late.playback.clear(1)).toBeCloseTo(500);
+  expect(late.playback.isDrained(1)).toBe(false);
 });
 
 it("resumes from now after the network starves playback", () => {
